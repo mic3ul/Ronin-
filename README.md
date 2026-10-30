@@ -350,3 +350,23 @@ https://huggingface.co/prithivMLmods/siglip2-x256-explicit-content - Our current
 ## Author of Samurai
 
 (C) 2026 Abraham Tugalov
+
+
+## Cloudflare webhook gateway
+
+Ronin includes an optional Cloudflare Workers gateway for Telegram webhook
+delivery. It preserves the existing Python/aiogram handlers and processing
+pipeline; the Worker validates Telegram's webhook secret and forwards updates
+to the Python origin. This means moderation, reputation, reports, scheduled
+announcements, ML checks, and YouTube features are not replaced with reduced
+Worker implementations.
+
+See [cloudflare/worker/README.md](cloudflare/worker/README.md) for deployment
+instructions and required environment variables. Run the Python webhook
+backend with `python webhook.py` and configure the Worker with
+`TELEGRAM_WEBHOOK_SECRET` and `BACKEND_URL`.
+
+**Runtime limitation:** Cloudflare Workers hosts the webhook gateway only.
+The existing Python feature engine still needs a compatible HTTPS Python
+runtime and durable database. The gateway alone is not a full Cloudflare-only
+deployment and does not make the bot production-ready without that origin.
