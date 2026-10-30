@@ -135,6 +135,12 @@ async function handleWhisper(env, message, text) {
     await sendText(env, message.chat.id, "الاستخدام: /whisper @username نص الهمسة\\nلازم المستلم يكون فتح البوت وأرسل /start أولاً.");
     return true;
   }
+  try {
+    await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id });
+  } catch {
+    await sendText(env, message.chat.id, "لم أرسل الهمسة حتى لا يظهر نصها في المجموعة. امنح البوت صلاحية حذف الرسائل ثم أعد المحاولة.");
+    return true;
+  }
   const username = match[1].toLowerCase();
   const recipient = await env.DB.prepare("SELECT user_id, first_name FROM private_users WHERE username = ?").bind(username).first();
   if (!recipient) {
@@ -175,6 +181,7 @@ async function handleNewCallback(env, callback) {
     await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(id).run();
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة." });
     await sendText(env, callback.from.id, "💌 <b>همستك:</b>\\n" + escapeHtml(whisper.body));
+    await sendText(env, whisper.sender_user_id, "📭 تم فتح همستك من المستلم.");
     return true;
   }
   if (data.startsWith("quiz:")) {
@@ -255,11 +262,12 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/games", "!games", "/العاب", "/ألعاب"].includes(command)) {
-    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\\n/quiz — سؤال سريع بأربع إجابات\\n/rps — حجر ورقة مقص ضد البوت\\n/cars — معلومات سيارات وتحدي سريع\\n/whisper @username نص — أرسل همسة خاصة");
+    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\\n/quiz — سؤال سريع بأربع إجابات\\n/cars — تحدي معلومات السيارات\\n/rps — حجر ورقة مقص ضد البوت\\n/checkin — حضور يومي +5 نقاط\\n/top — أفضل 10 أعضاء\\n/whisper @username نص — أرسل همسة خاصة");
     return true;
   }
   if (["/quiz", "!quiz", "/cars", "/سيارات"].includes(command)) {
-    const question = QUIZ_BANK[Math.floor(Math.random() * QUIZ_BANK.length)];
+    const bank = command === "/cars" || command === "/سيارات" ? CAR_QUIZ_BANK : QUIZ_BANK;
+    const question = bank[Math.floor(Math.random() * bank.length)];
     const id = await createGame(env, chatId, message.from.id, "quiz", question);
     await sendText(env, chatId, (command === "/cars" || command === "/سيارات" ? "🚘 " : "🧠 ") + "<b>" + escapeHtml(question.q) + "</b>", {
       reply_markup: { inline_keyboard: [question.a.map((answer, index) => ({ text: answer, callback_data: "quiz:" + id + ":" + index }))] }
