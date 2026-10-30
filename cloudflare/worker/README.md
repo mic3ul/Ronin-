@@ -32,6 +32,10 @@ Implemented in this first native port:
 - Optional profanity term matching via the `PROFANITY_TERMS` variable.
 - Newcomer-burst detection with configurable log/delete action.
 - `/ping`, `/rules`, `/me`, `/report`, `/ban`, and `/unban`.
+- Arabic group entertainment: `/games`, `/quiz`, car trivia (`/cars`), and `/rps` with inline answers.
+- Daily check-ins (`/checkin`) and a reputation leaderboard (`/top`).
+- Private one-to-one whispers (`/whisper @username text`) with an explicit open button and an opened status.
+- Private `/start` registration so users can receive whispers; recipients must start the bot first.
 - Moderator report buttons, audit log output, and optional repeat-spam autoban.
 
 Not yet ported from the Python runtime:
@@ -92,8 +96,12 @@ Set these in the Worker settings or add them to `vars` in `wrangler.jsonc`:
 - `BURST_ENABLED`, `BURST_ACTION`: `log` is the safe default; `delete` is more aggressive.
 - `MEDIA_REP_THRESHOLD`, `LINK_REP_THRESHOLD`, `SINGLE_EMOJI_REP_THRESHOLD`.
 
+Whispers are delivered only to users who have opened the bot and sent `/start`; Telegram does not let a bot initiate a private conversation with an arbitrary username. The opened indicator is recorded when the recipient presses **Open whisper** (the Bot API does not expose message read receipts).
+
 The initial configuration intentionally leaves `MAIN_GROUP_IDS` empty and
 autoban disabled so a fresh deployment cannot moderate an unintended group.
+
+Apply all checked-in migrations, including `0002_social_games_whispers.sql` and `0003_daily_checkins.sql`, before deploying the updated Worker. These migrations are additive and do not delete existing data.
 
 ### 4. Deploy the Worker
 
