@@ -14,20 +14,12 @@ from services.youtube_search import (
     YouTubeAudioError,
     YouTubeSearchError,
     download_youtube_audio,
+    format_duration,
     search_youtube,
 )
 
 router = Router(name="youtube")
 logger = logging.getLogger(__name__)
-
-
-def _duration(seconds: int | float | None) -> str:
-    if not isinstance(seconds, (int, float)) or seconds < 0:
-        return "المدة غير معروفة"
-    total = int(seconds)
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
 @router.message(Command("yt", "youtube", "يوت", "يوتيوب", "بحث", prefix="/!"))
@@ -62,7 +54,7 @@ async def youtube_search_command(message: Message, command: CommandObject) -> No
     for index, item in enumerate(results, start=1):
         title = html.escape(item["title"])
         channel = html.escape(item["channel"])
-        duration = _duration(item["duration"])
+        duration = format_duration(item["duration"])
         lines.append(f"<b>{index}.</b> {title}")
         details = " • ".join(part for part in (channel, duration) if part)
         if details:
