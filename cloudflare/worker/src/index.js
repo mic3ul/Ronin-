@@ -130,7 +130,7 @@ async function registerPrivateUser(env, user) {
     .bind(user.id, user.username ? user.username.toLowerCase() : null, user.first_name || "", user.id).run();
 }
 async function handleWhisper(env, message, text) {
-  const match = text.match(/^(?:\\/whisper(?:@\\w+)?|\\/همسة)\\s+@([A-Za-z0-9_]{5,32})\\s+([\\s\\S]{1,700})$/i);
+  const match = text.match(/^(?:\/whisper(?:@\w+)?|\/همسة)\s+@([A-Za-z0-9_]{5,32})\s+([\s\S]{1,700})$/i);
   if (!match) {
     await sendText(env, message.chat.id, "الاستخدام: /whisper @username نص الهمسة\\nلازم المستلم يكون فتح البوت وأرسل /start أولاً.");
     return true;
