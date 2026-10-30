@@ -4,7 +4,6 @@ Health check HTTP server.
 Provides a simple HTTP endpoint for container orchestration
 and monitoring systems to check if the bot is alive.
 """
-import asyncio
 import logging
 from aiohttp import web
 
