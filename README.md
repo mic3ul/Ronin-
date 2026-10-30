@@ -233,6 +233,8 @@ docker run -d --name samurai-bot \
 
 The data volume preserves the SQLite database and announcement timestamps across container replacement. Port `8080` is only needed when `[healthcheck].enabled = true`.
 
+The Docker build context excludes local `.env` files and database files. Pass `BOT_TOKEN` at runtime with `--env-file` or a platform secret; never put a real token in `config.toml` or bake it into the image.
+
 ### Health checks (heartbeat)
 
 When enabled in `config.toml`, the HTTP server exposes:

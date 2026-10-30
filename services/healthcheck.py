@@ -1,92 +1,62 @@
-"""
-Health check HTTP server.
+"""Health and readiness endpoints for the bot runtime."""
 
-Provides a simple HTTP endpoint for container orchestration
-and monitoring systems to check if the bot is alive.
-"""
 import logging
+
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
 
 class HealthCheckServer:
-    """
-    Simple HTTP server for health checks.
-    
-    Exposes /health and /ready endpoints for Kubernetes,
-    Docker, or other orchestration systems.
-    """
-    
+    """Expose /health and /ready endpoints for process monitoring."""
+
     def __init__(self, host: str = "0.0.0.0", port: int = 8080) -> None:
-        """
-        Initialize health check server.
-        
-        Args:
-            host: Host to bind to
-            port: Port to listen on
-        """
         self.host = host
         self.port = port
         self.app = web.Application()
         self.runner: web.AppRunner | None = None
         self._is_ready = False
-        
-        # Setup routes
+
         self.app.router.add_get("/health", self._health_handler)
         self.app.router.add_get("/ready", self._ready_handler)
         self.app.router.add_get("/", self._health_handler)
-    
+
     async def _health_handler(self, request: web.Request) -> web.Response:
-        """
-        Health check endpoint.
-        
-        Returns 200 if the server is running.
-        Used for liveness probes.
-        """
+        """Return success while the HTTP server is running."""
         return web.json_response({"status": "healthy"})
-    
+
     async def _ready_handler(self, request: web.Request) -> web.Response:
-        """
-        Readiness check endpoint.
-        
-        Returns 200 if the bot is ready to handle requests.
-        Used for readiness probes.
-        """
+        """Return success only after bot startup has completed."""
         if self._is_ready:
             return web.json_response({"status": "ready"})
-        return web.json_response(
-            {"status": "not ready"},
-            status=503
-        )
-    
+        return web.json_response({"status": "not ready"}, status=503)
+
     def set_ready(self, ready: bool = True) -> None:
-        """Set the readiness status."""
+        """Set whether the bot is ready to process updates."""
         self._is_ready = ready
-    
+
     async def start(self) -> None:
-        """Start the health check server."""
+        """Start the standalone health-check HTTP server."""
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        
+
         site = web.TCPSite(self.runner, self.host, self.port)
         await site.start()
-        
-        logger.info(f"Health check server started on {self.host}:{self.port}")
-    
+
+        logger.info("Health check server started on %s:%s", self.host, self.port)
+
     async def stop(self) -> None:
-        """Stop the health check server."""
+        """Stop the standalone health-check HTTP server."""
         if self.runner:
             await self.runner.cleanup()
             logger.info("Health check server stopped")
 
 
-# Global instance
 _health_server: HealthCheckServer | None = None
 
 
 def get_health_server(host: str = "0.0.0.0", port: int = 8080) -> HealthCheckServer:
-    """Get or create the global health check server."""
+    """Get or create the process-wide health-check server."""
     global _health_server
     if _health_server is None:
         _health_server = HealthCheckServer(host=host, port=port)
@@ -94,14 +64,14 @@ def get_health_server(host: str = "0.0.0.0", port: int = 8080) -> HealthCheckSer
 
 
 async def start_health_server(host: str = "0.0.0.0", port: int = 8080) -> HealthCheckServer:
-    """Start the health check server."""
+    """Start the process-wide health-check server."""
     server = get_health_server(host, port)
     await server.start()
     return server
 
 
 async def stop_health_server() -> None:
-    """Stop the health check server."""
+    """Stop and clear the process-wide health-check server."""
     global _health_server
     if _health_server:
         await _health_server.stop()
@@ -109,7 +79,7 @@ async def stop_health_server() -> None:
 
 
 def register_health_routes(app: web.Application, server: HealthCheckServer | None = None) -> None:
-    """Mount health and readiness endpoints on an existing aiohttp app."""
+    """Mount health and readiness routes on an existing aiohttp app."""
     health_server = server or get_health_server()
     app.router.add_get("/health", health_server._health_handler)
     app.router.add_get("/ready", health_server._ready_handler)
