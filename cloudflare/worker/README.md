@@ -39,7 +39,8 @@ existing Python feature engine.
 
 1. Provision a compatible Python origin (external host or Cloudflare
    Container) with HTTPS and a durable database. Configure the origin to run
-   `python webhook.py`, not the polling entry point.
+   `python webhook.py`, not the polling entry point. For the repository Docker image,
+   set `RUN_MODE=webhook`; the default remains `RUN_MODE=polling`.
 2. Set the Worker secrets from this directory:
 
    ```bash
