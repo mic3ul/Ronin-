@@ -479,6 +479,24 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return json({ service: "ronin-cloudflare-bot", status: "ok", runtime: "workers+d1" });
+    if (url.pathname === "/telegram/setup") {
+      if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+      if (!env.TELEGRAM_WEBHOOK_SECRET || !safeEqual(request.headers.get("X-Ronin-Setup-Key") || "", env.TELEGRAM_WEBHOOK_SECRET)) return json({ error: "unauthorized" }, 401);
+      if (!env.TELEGRAM_BOT_TOKEN) return json({ error: "bot_token_not_configured" }, 503);
+      try {
+        await telegram(env, "setWebhook", {
+          url: url.origin + WEBHOOK_PATH,
+          secret_token: env.TELEGRAM_WEBHOOK_SECRET,
+          allowed_updates: ["message", "edited_message", "callback_query"],
+          drop_pending_updates: false
+        });
+        const webhook = await telegram(env, "getWebhookInfo", {});
+        return json({ ok: true, webhook });
+      } catch (error) {
+        console.error("Ronin webhook setup failed", error);
+        return json({ error: "webhook_setup_failed" }, 502);
+      }
+    }
     if (url.pathname !== WEBHOOK_PATH) return json({ error: "not_found" }, 404);
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
     if (!env.TELEGRAM_WEBHOOK_SECRET || !safeEqual(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "", env.TELEGRAM_WEBHOOK_SECRET)) return json({ error: "unauthorized" }, 401);
