@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from yt_dlp import YoutubeDL
 
@@ -23,6 +24,21 @@ def format_duration(seconds: int | float | None) -> str:
     hours, remainder = divmod(total, 3600)
     minutes, secs = divmod(remainder, 60)
     return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+def is_youtube_url(url: str) -> bool:
+    """Accept HTTPS URLs whose hostname is exactly a YouTube web host."""
+    try:
+        parsed = urlsplit(url)
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname in {"youtube.com", "www.youtube.com"}
+            and parsed.port is None
+            and parsed.username is None
+            and parsed.password is None
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 class YouTubeSearchError(RuntimeError):
@@ -55,11 +71,11 @@ def _search_sync(query: str, limit: int) -> list[dict[str, Any]]:
         url = item.get("webpage_url")
         if not url and video_id:
             url = f"https://www.youtube.com/watch?v={video_id}"
-        if not url or not str(url).startswith("https://www.youtube.com/"):
+        if not url or not is_youtube_url(str(url)):
             continue
         results.append({
             "title": str(item.get("title") or "Untitled video")[:180],
-            "url": url,
+            "url": str(url),
             "duration": item.get("duration"),
             "channel": str(item.get("channel") or item.get("uploader") or "")[:80],
         })
@@ -78,8 +94,8 @@ async def search_youtube(query: str, limit: int = 5) -> list[dict[str, Any]]:
 
 
 def _download_audio_sync(url: str) -> tuple[str, str]:
-    if not url.startswith("https://www.youtube.com/"):
-        raise YouTubeAudioError("Only YouTube result URLs are accepted")
+    if not is_youtube_url(url):
+        raise YouTubeAudioError("Only HTTPS YouTube URLs are accepted")
 
     workdir = tempfile.mkdtemp(prefix="ronin-audio-")
     options = {
