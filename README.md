@@ -331,7 +331,7 @@ Search for songs, music, and videos directly from a group or private chat:
 - `/يوت <اسم الأغنية>`
 - `/يوتيوب <اسم الفيديو>`
 
-The bot returns up to five matching YouTube results with title, channel, duration, and direct links. Use `/play --authorized <song name>` (or `/شغل --authorized <اسم الأغنية>`) only when you own the audio or have explicit permission to download and redistribute it. The required `--authorized` flag is an explicit user attestation, not an independent rights check. Audio preparation is limited to 15 minutes and 45 MB and requires FFmpeg. YouTube availability does not grant download or redistribution rights.
+The bot returns up to five matching YouTube results with title, channel, duration, and direct links. This feature is metadata-only: Ronin does not download, copy, or re-host YouTube media.
 
 ## External Libraries
 
@@ -366,7 +366,15 @@ instructions and required environment variables. Run the Python webhook
 backend with `python webhook.py` and configure the Worker with
 `TELEGRAM_WEBHOOK_SECRET` and `BACKEND_URL`.
 
-**Runtime limitation:** Cloudflare Workers hosts the webhook gateway only.
-The existing Python feature engine still needs a compatible HTTPS Python
-runtime and durable database. The gateway alone is not a full Cloudflare-only
-deployment and does not make the bot production-ready without that origin.
+**Runtime and storage boundary:** the Worker is only the webhook edge. The full
+Python application can also be packaged for Cloudflare Containers, which run
+Linux images but require the Workers Paid plan. This route has not been validated
+for Ronin yet. Container-local filesystems are ephemeral, so the default
+SQLite file must not be used as the production database. Use an external durable
+SQL database, or implement and test a D1 adapter; D1 is not a drop-in replacement
+for the current Ormar/SQLAlchemy SQLite URL. The current MySQL driver entries
+are optional and must be installed and tested before using a remote MySQL URL.
+
+Do not call Ronin deployed until a real container/origin, durable database,
+Cloudflare Secrets, webhook delivery, and live Telegram update processing have
+all been verified.

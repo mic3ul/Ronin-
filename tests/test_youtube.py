@@ -37,6 +37,7 @@ def test_duration_formatting(seconds, expected):
     [
         "https://www.youtube.com/watch?v=abc",
         "https://youtube.com/watch?v=abc",
+        "https://www.youtube.com:443/watch?v=abc",
     ],
 )
 def test_accepts_real_youtube_hosts(url):
@@ -47,11 +48,11 @@ def test_accepts_real_youtube_hosts(url):
     "url",
     [
         "http://www.youtube.com/watch?v=abc",
+        "https://www.youtube.com:444/watch?v=abc",
         "https://www.youtube.com.evil.example/watch?v=abc",
         "https://youtube.com.evil.example/watch?v=abc",
         "https://notyoutube.com/watch?v=abc",
         "https://www.youtube.com@evil.example/watch?v=abc",
-        "https://www.youtube.com:443/watch?v=abc",
         "javascript://youtube.com/watch?v=abc",
     ],
 )
@@ -63,6 +64,7 @@ def test_search_youtube_normalizes_results(monkeypatch):
     class FakeYoutubeDL:
         def __init__(self, options):
             self.options = options
+            assert options["skip_download"] is True
 
         def __enter__(self):
             return self
@@ -135,30 +137,22 @@ def test_search_youtube_rejects_non_youtube_url(monkeypatch):
         (-1, None),
         (float("nan"), None),
         (float("inf"), None),
+        (10**1000, 10**1000),
     ],
 )
 def test_duration_normalization(value, expected):
     assert youtube_search.normalize_duration(value) == expected
 
 
-def test_search_youtube_normalizes_invalid_duration_to_unknown(monkeypatch):
-    class FakeYoutubeDL:
-        def __init__(self, options):
-            pass
+@pytest.mark.asyncio
+async def test_search_youtube_caps_result_count(monkeypatch):
+    calls = {}
 
-        def __enter__(self):
-            return self
+    def fake_search(query, limit):
+        calls["query"] = query
+        calls["limit"] = limit
+        return []
 
-        def __exit__(self, *args):
-            return False
-
-        def extract_info(self, query, download=False):
-            return {
-                "entries": [
-                    {"id": "abc123", "title": "Test", "duration": "unknown"},
-                ]
-            }
-
-    monkeypatch.setattr(youtube_search, "YoutubeDL", FakeYoutubeDL)
-    results = youtube_search._search_sync("test", 1)
-    assert results[0]["duration"] is None
+    monkeypatch.setattr(youtube_search, "_search_sync", fake_search)
+    assert await youtube_search.search_youtube("test", limit=50) == []
+    assert calls == {"query": "test", "limit": 5}

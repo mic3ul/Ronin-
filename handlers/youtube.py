@@ -1,19 +1,20 @@
-"""YouTube search and group audio commands."""
+"""Arabic-friendly YouTube metadata search for groups and private chats."""
 
 import html
 import logging
-import shutil
-from pathlib import Path
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import CommandObject, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from aiogram.types.input_file import FSInputFile
+from aiogram.types import (
+    CommandObject,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
+from filters import ThrottleFilter
 from services.youtube_search import (
-    YouTubeAudioError,
     YouTubeSearchError,
-    download_youtube_audio,
     format_duration,
     search_youtube,
 )
@@ -22,9 +23,13 @@ router = Router(name="youtube")
 logger = logging.getLogger(__name__)
 
 
-@router.message(Command("yt", "youtube", "يوت", "يوتيوب", "بحث", prefix="/!"))
+@router.message(
+    Command("yt", "youtube", "يوت", "يوتيوب", "بحث", prefix="/!"),
+    ThrottleFilter(interval=2, per_member=True, per_group=True),
+    ThrottleFilter(interval=1, per_group=True),
+)
 async def youtube_search_command(message: Message, command: CommandObject) -> None:
-    """Find YouTube videos from a short text query."""
+    """Search YouTube and return metadata plus links without downloading media."""
     query = (command.args or "").strip()
     if not query:
         await message.reply(
@@ -59,10 +64,12 @@ async def youtube_search_command(message: Message, command: CommandObject) -> No
         details = " • ".join(part for part in (channel, duration) if part)
         if details:
             lines.append(f"<i>{details}</i>")
-        rows.append([InlineKeyboardButton(
-            text=f"▶ {index}. {item['title'][:48]}",
-            url=item["url"],
-        )])
+        rows.append([
+            InlineKeyboardButton(
+                text=f"▶ {index}. {item['title'][:48]}",
+                url=item["url"],
+            )
+        ])
 
     lines.extend(["", "اضغط على النتيجة لفتحها في يوتيوب."])
     await status.edit_text(
@@ -70,68 +77,3 @@ async def youtube_search_command(message: Message, command: CommandObject) -> No
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         disable_web_page_preview=True,
     )
-
-
-@router.message(Command("play", "music", "شغل", "اغنية", "أغنية", prefix="/!"))
-async def youtube_play_command(message: Message, command: CommandObject) -> None:
-    """Find the best YouTube match and send a short audio file to the chat."""
-    raw_args = (command.args or "").strip()
-    prefix = "--authorized "
-    if not raw_args.startswith(prefix):
-        await message.reply(
-            "لا أستطيع تنزيل أو إرسال محتوى لا تملك حق استخدامه.\\n"
-            "إذا كنت تملك المقطع أو لديك إذن صريح بإعادة توزيعه، "
-            "أكّد ذلك باستخدام:\\n"
-            "<code>/play --authorized اسم الأغنية</code>"
-        )
-        return
-    query = raw_args[len(prefix):].strip()
-    if not query:
-        await message.reply("اكتب اسم الأغنية بعد --authorized.")
-        return
-    if len(query) > 160:
-        await message.reply("الطلب طويل جداً. اختصره إلى 160 حرفاً.")
-        return
-
-    status = await message.reply("🔎 أبحث عن الأغنية…")
-    try:
-        results = await search_youtube(query, limit=1)
-    except YouTubeSearchError:
-        logger.exception("YouTube search failed for playback")
-        await status.edit_text("تعذّر البحث حالياً. حاول مرة أخرى بعد قليل.")
-        return
-
-    if not results:
-        await status.edit_text("لم أجد أغنية مطابقة. جرّب اسماً آخر.")
-        return
-
-    selected = results[0]
-    duration = selected.get("duration")
-    if duration and duration > 15 * 60:
-        await status.edit_text("الأغنية أطول من الحد المسموح (15 دقيقة).")
-        return
-
-    audio_path = None
-    try:
-        await status.edit_text("⬇️ أجهّز الملف الصوتي…")
-        audio_path, title = await download_youtube_audio(selected["url"])
-        await message.answer_audio(
-            audio=FSInputFile(audio_path, filename="ronin-track.mp3"),
-            title=title,
-            performer=selected.get("channel") or None,
-            caption=f"🎵 <b>{html.escape(title)}</b>\n"
-                    "<i>تم الإرسال بناءً على طلب المجموعة.</i>",
-        )
-        await status.delete()
-    except YouTubeAudioError:
-        logger.exception("YouTube audio preparation failed")
-        await status.edit_text(
-            "تعذّر تجهيز الصوت. قد يكون المقطع محمياً أو أطول/أكبر من الحد، "
-            "أو أن FFmpeg غير مثبت."
-        )
-    except Exception:
-        logger.exception("Failed to send YouTube audio to chat")
-        await status.edit_text("فشل إرسال الملف الصوتي. تحقق من اتصال البوت وحاول مجدداً.")
-    finally:
-        if audio_path:
-            shutil.rmtree(str(Path(audio_path).parent), ignore_errors=True)

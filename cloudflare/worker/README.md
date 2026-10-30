@@ -2,76 +2,94 @@
 
 This Worker is a secure Telegram webhook edge gateway. It validates Telegram's
 webhook secret and forwards updates to the existing Python/aiogram application.
+The Worker does not replace Ronin's moderation, reputation, reports, scheduled
+announcements, ML checks, or group handlers.
 
-## Feature parity and runtime boundary
+## Deployment options
 
-The Worker does **not** replace Ronin's Python feature engine. Keeping all
-existing moderation, reputation, reports, scheduled announcements, ML spam and
-NSFW checks, and YouTube tooling unchanged requires the Python runtime and its
-persistent database. PyTorch/Transformers, FFmpeg, yt-dlp, the existing ORM, and
-the long-running scheduler are not moved into the Worker.
+### Worker gateway + external Python origin
 
-This adapter changes only Telegram update transport: polling is replaced by
-Telegram webhook delivery through Cloudflare. The Python backend remains
-responsible for processing each update. Do not remove the Python backend or its
-persistent database when deploying this gateway.
+The smallest setup keeps this Worker as the public Telegram endpoint and runs
+the existing Python engine on a separate HTTPS host with a durable database.
+This changes only update transport: polling is replaced by Telegram webhook
+delivery. Do not remove the Python backend or its database.
 
-## Configure
+### Full Python runtime with Cloudflare Containers
 
-1. Provision a compatible Python origin with HTTPS and a persistent database.
-   Install the project and make its model files available, but do not start
-   `webhook.py` yet. Record the origin base URL (for example,
-   `https://ronin-origin.example.com`).
+Cloudflare Containers can run Linux Docker images and are a possible host for
+Ronin's existing Python runtime. Container deployment requires the Workers
+Paid plan. It is not the same as deploying a lightweight Worker, and Ronin's
+container image, memory use, model loading, and long-running scheduler still
+need an actual deployment smoke test.
 
-2. From this directory, configure the Worker secrets:
+**Container disk is temporary.** Files written to its local filesystem can be
+lost when the instance sleeps or restarts. Do not point production
+`DB_URL` at the default `sqlite+aiosqlite:///db.sqlite` file inside the
+container. Use a durable external SQL database, or implement and test a D1
+adapter. D1 is not a drop-in replacement for the current Ormar/SQLAlchemy
+database layer. The optional MySQL driver dependencies in `requirements.txt`
+must be enabled and tested before using a remote MySQL URL.
+
+Cloudflare Python Workers are not a drop-in runtime for the full application:
+the project includes native ML dependencies and a Linux-oriented Docker
+runtime. A Container is the more realistic Cloudflare route for preserving the
+existing Python feature engine.
+
+## Configure the Worker
+
+1. Provision a compatible Python origin (external host or Cloudflare
+   Container) with HTTPS and a durable database. Configure the origin to run
+   `python webhook.py`, not the polling entry point.
+2. Set the Worker secrets from this directory:
 
    ```bash
    npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
    npx wrangler secret put BACKEND_URL
    ```
 
-   Use the exact same random value for `TELEGRAM_WEBHOOK_SECRET` and the
-   Python `WEBHOOK_SECRET`. Set `BACKEND_URL` to the HTTPS Python origin base
-   URL. These values are stored as Worker secrets, not committed to Git.
+   Use the same random value for `TELEGRAM_WEBHOOK_SECRET` and the Python
+   origin's `WEBHOOK_SECRET`. Keep the bot token and all webhook secrets in
+   the platform's secret manager; never commit them or paste them into chat.
+   `BACKEND_URL` must be the HTTPS origin base URL.
 
-3. Test and deploy the Worker:
+3. Run the Worker tests and local development server:
 
    ```bash
    node --test test/index.test.js
    npx wrangler dev
+   ```
+
+4. Deploy the Worker only after the origin is reachable and its secrets are
+   configured:
+
+   ```bash
    npx wrangler deploy
    ```
 
-4. Stop any running Ronin polling instance. Telegram cannot use polling and
-   webhook delivery for the same bot at the same time. Then start the Python
-   webhook process with:
+5. Stop any running polling instance before enabling the Telegram webhook.
+   Telegram cannot use polling and webhook delivery for the same bot at once.
+   Start the Python origin with its platform-managed `BOT_TOKEN`,
+   `WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, and durable `DB_URL`.
 
-   ```bash
-   export BOT_TOKEN="..."
-   export WEBHOOK_SECRET="the-same-value-used-for-the-Worker"
-   export TELEGRAM_WEBHOOK_URL="https://<worker-name>.<account-subdomain>.workers.dev"
-   export DB_URL="your-existing-durable-database-url"
-   python webhook.py
-   ```
-
-   Its startup hook registers the Telegram webhook without dropping pending
-   updates. The Python origin must be reachable over HTTPS at
-   `/telegram/webhook` and retain its existing database and model files.
+The Worker forwards authenticated updates to
+`/telegram/webhook`. The Python origin must validate the same webhook secret.
+The Worker returns non-2xx responses when the origin is unavailable so Telegram
+can retry delivery.
 
 ## Endpoints
 
 - `GET /health`: Worker liveness endpoint.
 - `POST /telegram/webhook`: authenticated Telegram update relay.
 
-The Worker returns non-2xx responses when the origin is unavailable so Telegram
-can retry delivery. Never expose the Python origin without HTTPS and the
-webhook-secret check. Keep `BOT_TOKEN`, `WEBHOOK_SECRET`, and
-`TELEGRAM_WEBHOOK_SECRET` out of source control and logs.
+## YouTube behavior
 
-## Important
+YouTube lookup is metadata-only: title, channel, duration, and the direct
+YouTube link. Ronin does not download or re-host YouTube media.
 
-Cloudflare Workers Free hosts this gateway, not the Python feature engine.
-A free Cloudflare-only deployment of the entire existing bot is not currently
-claimed: preserving the full PyTorch/Transformers + FFmpeg + database +
-scheduler feature set requires a compatible Python compute origin. This
-separation avoids silently disabling existing features.
+## Production boundary
+
+A successful Worker upload alone does not mean Ronin is deployed. Verify the
+container or external Python origin, durable database persistence across
+restarts, secret handling, Telegram webhook registration, and live update
+processing before describing the bot as deployed. No production deployment is
+claimed by this repository configuration.
