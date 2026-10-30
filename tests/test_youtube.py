@@ -1,7 +1,7 @@
 import pytest
 
-from handlers.youtube import _duration
 from services import youtube_search
+from services.youtube_search import format_duration
 
 
 @pytest.mark.parametrize(
@@ -17,7 +17,7 @@ from services import youtube_search
     ],
 )
 def test_duration_formatting(seconds, expected):
-    assert _duration(seconds) == expected
+    assert format_duration(seconds) == expected
 
 
 def test_search_youtube_normalizes_results(monkeypatch):
