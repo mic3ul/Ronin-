@@ -157,14 +157,14 @@ async function handleCallback(env, callback) {
   if (action === "report_ban") await telegram(env, "banChatMember", { chat_id: chatId, user_id: userId });
   await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: action === "report_ban" ? "User banned and message deleted." : "Message deleted." });
 }
-async function handleMessage(env, message) {
+async function handleMessage(env, message, edited = false) {
   if (!message || !message.from || message.from.is_bot || !isGroup(message.chat)) return;
   if (!parseIds(env.MAIN_GROUP_IDS).has(Number(message.chat.id))) return;
   const userId = message.from.id;
   await ensureMember(env.DB, userId);
   let member = await getMember(env.DB, userId);
   if (!member) return;
-  if (await handleCommands(env, message, member)) return;
+  if (!edited && await handleCommands(env, message, member)) return;
   const text = getText(message);
   const reason = getSpamReason(text, env);
   const lowMedia = isMedia(message) && member.reputation_points < Number(env.MEDIA_REP_THRESHOLD || DEFAULTS.media);
@@ -172,7 +172,7 @@ async function handleMessage(env, message) {
   const lowEmoji = isSingleEmoji(text) && member.reputation_points < Number(env.SINGLE_EMOJI_REP_THRESHOLD || DEFAULTS.emoji);
   const moderationReason = reason || (lowMedia ? "media from low-reputation account" : null) || (lowLink ? "link from low-reputation account" : null) || (lowEmoji ? "single-emoji spam" : null);
   if (moderationReason) {
-    if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) { await recordClean(env.DB, userId); return; }
+    if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) { if (!edited) await recordClean(env.DB, userId); return; }
     await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id }).catch(() => null);
     await recordViolation(env.DB, userId, moderationReason === "profanity" ? "profanity" : "spam");
     member = await getMember(env.DB, userId);
@@ -180,13 +180,13 @@ async function handleMessage(env, message) {
     if (member) await maybeAutoBan(env, message.chat.id, userId, member).catch(() => null);
     return;
   }
-  await recordClean(env.DB, userId);
+  if (!edited) await recordClean(env.DB, userId);
   member = await getMember(env.DB, userId);
-  if (member) await checkBurst(env, env.DB, message, member).catch(() => null);
+  if (!edited && member) await checkBurst(env, env.DB, message, member).catch(() => null);
 }
 async function processUpdate(update, env) {
   if (update.message) await handleMessage(env, update.message);
-  if (update.edited_message) await handleMessage(env, update.edited_message);
+  if (update.edited_message) await handleMessage(env, update.edited_message, true);
   if (update.callback_query) await handleCallback(env, update.callback_query);
 }
 export default {
