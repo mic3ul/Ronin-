@@ -18,34 +18,23 @@ persistent database when deploying this gateway.
 
 ## Configure
 
-1. Deploy the Python app with the webhook entry point:
+1. Provision a compatible Python origin with HTTPS and a persistent database.
+   Install the project and make its model files available, but do not start
+   `webhook.py` yet. Record the origin base URL (for example,
+   `https://ronin-origin.example.com`).
 
-   ```bash
-   pip install -r requirements.txt
-   export BOT_TOKEN="..."
-   export WEBHOOK_SECRET="a-random-secret-with-letters-numbers-dashes"
-   export TELEGRAM_WEBHOOK_URL="https://<worker-name>.<account-subdomain>.workers.dev"
-   export DB_URL="your-existing-durable-database-url"
-   python webhook.py
-   ```
-
-   The Python origin must be reachable over HTTPS at `/telegram/webhook`.
-   Keep its existing durable database and all model files available. The origin
-   must accept the same `WEBHOOK_SECRET` in Telegram's
-   `X-Telegram-Bot-Api-Secret-Token` header.
-
-2. From this directory, configure the Worker secret and origin URL:
+2. From this directory, configure the Worker secrets:
 
    ```bash
    npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
    npx wrangler secret put BACKEND_URL
    ```
 
-   Set `BACKEND_URL` to the HTTPS origin base URL (for example,
-   `https://ronin-origin.example.com`). It is stored as a Worker secret here
-   to avoid committing deployment-specific hostnames.
+   Use the exact same random value for `TELEGRAM_WEBHOOK_SECRET` and the
+   Python `WEBHOOK_SECRET`. Set `BACKEND_URL` to the HTTPS Python origin base
+   URL. These values are stored as Worker secrets, not committed to Git.
 
-3. Test locally and deploy:
+3. Test and deploy the Worker:
 
    ```bash
    node --test test/index.test.js
@@ -53,9 +42,21 @@ persistent database when deploying this gateway.
    npx wrangler deploy
    ```
 
-4. Set `TELEGRAM_WEBHOOK_URL` in the Python backend to the deployed Worker
-   base URL and restart the backend. Its startup hook registers the Telegram
-   webhook without dropping pending updates.
+4. Stop any running Ronin polling instance. Telegram cannot use polling and
+   webhook delivery for the same bot at the same time. Then start the Python
+   webhook process with:
+
+   ```bash
+   export BOT_TOKEN="..."
+   export WEBHOOK_SECRET="the-same-value-used-for-the-Worker"
+   export TELEGRAM_WEBHOOK_URL="https://<worker-name>.<account-subdomain>.workers.dev"
+   export DB_URL="your-existing-durable-database-url"
+   python webhook.py
+   ```
+
+   Its startup hook registers the Telegram webhook without dropping pending
+   updates. The Python origin must be reachable over HTTPS at
+   `/telegram/webhook` and retain its existing database and model files.
 
 ## Endpoints
 
