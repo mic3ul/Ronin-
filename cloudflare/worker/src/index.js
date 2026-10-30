@@ -101,12 +101,13 @@ const RANKS = {
   mujahid: { level: 60, label: "مجاهد" },
   thaer: { level: 80, label: "ثائر" },
   rafiq: { level: 100, label: "رفيق" },
+  admin: { level: 90, label: "إداري تيليجرام" },
   owner: { level: 110, label: "مؤسس المجموعة" }
 };
 async function getRank(env, chatId, userId) {
   const member = await telegram(env, "getChatMember", { chat_id: chatId, user_id: userId }).catch(() => null);
   if (member?.status === "creator") return "owner";
-  if (member?.status === "administrator") return "owner";
+  if (member?.status === "administrator") return "admin";
   const row = await env.DB.prepare("SELECT role FROM group_roles WHERE chat_id=? AND user_id=?").bind(chatId,userId).first();
   return RANKS[row?.role] ? row.role : "member";
 }
@@ -405,6 +406,7 @@ async function handleCommands(env, message, member) {
     const row = await env.DB.prepare("SELECT first_name, username, message_count, reputation_points FROM group_members WHERE chat_id=? AND user_id=?").bind(chatId, message.from.id).first();
     const profile = row || { first_name: message.from.first_name || "Member", username: message.from.username || null, message_count: 0, reputation_points: 0 };
     const level = getProfileLevel(profile.reputation_points);
+    const politicalRank = RANKS[await getRank(env,chatId,message.from.id)]?.label || "عضو";
     const rankRow = await env.DB.prepare("SELECT COUNT(*) + 1 AS rank FROM group_members WHERE chat_id=? AND (reputation_points > ? OR (reputation_points = ? AND message_count > ?))").bind(chatId, profile.reputation_points, profile.reputation_points, profile.message_count).first();
     const badges = [];
     if (profile.message_count >= 10) badges.push("💬 متفاعل");
@@ -415,11 +417,15 @@ async function handleCommands(env, message, member) {
     await sendText(env, chatId,
       "👤 <b>ملف العضو</b>\n<b>" + escapeHtml(profile.first_name || "Member") + "</b>" +
       (profile.username ? " · @" + escapeHtml(profile.username) : "") +
-      "\n🏆 المستوى: <b>" + level.level + "</b> · الترتيب: <b>#" + (rankRow?.rank || 1) + "</b>" +
+      "\nالرتبة: <b>" + politicalRank + "</b>\n🏆 المستوى: <b>" + level.level + "</b> · الترتيب: <b>#" + (rankRow?.rank || 1) + "</b>" +
       "\n⭐ السمعة: <b>" + profile.reputation_points + "</b>" +
       "\n📈 التقدم: " + level.currentXp + " / " + level.nextLevelXp + " XP" +
       "\n💬 الرسائل: " + profile.message_count +
       "\n🎖️ الشارات: " + badges.join("، "));
+    return true;
+  }
+  if (command === "/الرتب" || command === "/رتب") {
+    await sendText(env,chatId,"<b>سُلّم رتب المجموعة</b>\\nرفيق — أعلى رتبة تنظيمية\\nثائر — قيادة المجموعة\\nمجاهد — إشراف متقدم\\nمناضل — إشراف مساعد\\nمناصر — رتبة مساندة\\nعضو — الصلاحيات الأساسية");
     return true;
   }
   if (["/id", "!id", "/ايدي", "/معرفاتي"].includes(command)) {
@@ -427,7 +433,7 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/help", "!help", "/مساعدة", "/مساعده"].includes(command)) {
-    const help = "<b>دليل رونين</b>\n\n<b>الملف والتفاعل</b>\n/ملفي — ملفك ومستواك\n/المتصدرين — أفضل الأعضاء\n/حضور — حضور يومي\n/ايدي — معرّفات المجموعة والعضو\n\n<b>الألعاب</b>\n/العاب — قائمة الألعاب\n/سؤال — أسئلة عامة\n/سيارات — معلومات السيارات\n/حجر — حجر ورقة مقص\n/صراحة — سؤال صراحة\n/هذا_ام_ذاك — اختر بين خيارين\n/عملة — رمية عملة\n\n<b>الخصوصية</b>\n/همسة @username نص — همسة خاصة\n\n<b>الرتب</b>\n/اضف_رفيق، /اضف_ثائر، /اضف_مجاهد، /اضف_مناضل، /اضف_مناصر، /ازالة_رتبة\n\n<b>الإدارة</b>\nبالرد على عضو: /حظر، /فك_الحظر، /كتم، /تقييد، /الغاء_كتم\nأضف مدة مثل 10m أو 2h للكتم والتقييد.\n/بلاغ — إرسال بلاغ\n/القوانين — قوانين المجموعة";
+    const help = "<b>دليل رونين</b>\n\n<b>الملف والتفاعل</b>\n/ملفي — ملفك ومستواك\n/المتصدرين — أفضل الأعضاء\n/حضور — حضور يومي\n/ايدي — معرّفات المجموعة والعضو\n\n<b>الألعاب</b>\n/العاب — قائمة الألعاب\n/سؤال — أسئلة عامة\n/سيارات — معلومات السيارات\n/حجر — حجر ورقة مقص\n/صراحة — سؤال صراحة\n/هذا_ام_ذاك — اختر بين خيارين\n/عملة — رمية عملة\n\n<b>الخصوصية</b>\n/همسة @username نص — همسة خاصة\n\n<b>الرتب</b>\n/اضف_رفيق، /اضف_ثائر، /اضف_مجاهد، /اضف_مناضل، /اضف_مناصر، /ازالة_رتبة، /الرتب\n\n<b>الإدارة</b>\nبالرد على عضو: /حظر، /فك_الحظر، /كتم، /تقييد، /الغاء_كتم\nأضف مدة مثل 10m أو 2h للكتم والتقييد.\n/بلاغ — إرسال بلاغ\n/القوانين — قوانين المجموعة";
     try {
       const me=await telegram(env,"getMe",{});
       const photos=await telegram(env,"getUserProfilePhotos",{user_id:me.id,limit:1});
