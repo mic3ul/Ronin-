@@ -184,7 +184,11 @@ async function handleNewCallback(env, callback) {
       await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "سبق وفتحت الهمسة." });
       return true;
     }
-    await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(id).run();
+    const opened = await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(id).run();
+    if (!opened.meta || opened.meta.changes !== 1) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة بالفعل." });
+      return true;
+    }
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة." });
     await sendText(env, callback.from.id, "💌 <b>همستك:</b>\\n" + escapeHtml(whisper.body));
     await sendText(env, whisper.sender_user_id, "📭 تم فتح همستك من المستلم.");
@@ -198,9 +202,17 @@ async function handleNewCallback(env, callback) {
       await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "انتهت هذه الجولة." });
       return true;
     }
+    if (Number(game.chat_id) !== Number(callback.message.chat.id)) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "هذه الجولة لا تخص هذه المجموعة.", show_alert: true });
+      return true;
+    }
     const payload = JSON.parse(game.payload);
     const correct = choice === payload.correct;
-    await env.DB.prepare("UPDATE game_sessions SET status='finished', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(id).run();
+    const claimed = await env.DB.prepare("UPDATE game_sessions SET status='finished', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(id).run();
+    if (!claimed.meta || claimed.meta.changes !== 1) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "سبقك لاعب آخر!" });
+      return true;
+    }
     if (correct) {
       await ensureMember(env.DB, callback.from.id);
       await ensureGroupMember(env.DB, callback.message.chat.id, callback.from);
@@ -223,9 +235,17 @@ async function handleNewCallback(env, callback) {
       await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "انتهت الجولة أو الاختيار غير صالح." });
       return true;
     }
+    if (Number(game.chat_id) !== Number(callback.message.chat.id) || Number(game.creator_user_id) !== Number(callback.from.id)) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "هذه الجولة لصاحب التحدي فقط.", show_alert: true });
+      return true;
+    }
     const botChoice = Math.floor(Math.random() * 3);
     const outcome = choice === botChoice ? "تعادل!" : (choice - botChoice + 3) % 3 === 1 ? "فزت! +2 نقاط" : "فاز البوت هذه المرة.";
-    await env.DB.prepare("UPDATE game_sessions SET status='finished', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(id).run();
+    const claimed = await env.DB.prepare("UPDATE game_sessions SET status='finished', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(id).run();
+    if (!claimed.meta || claimed.meta.changes !== 1) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "انتهت الجولة بالفعل." });
+      return true;
+    }
     if (outcome.startsWith("فزت")) {
       await ensureMember(env.DB, callback.from.id);
       await ensureGroupMember(env.DB, callback.message.chat.id, callback.from);
@@ -272,7 +292,7 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/games", "!games", "/العاب", "/ألعاب"].includes(command)) {
-    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\\n/quiz — سؤال سريع بأربع إجابات\\n/cars — تحدي معلومات السيارات\\n/rps — حجر ورقة مقص ضد البوت\\n/checkin — حضور يومي +5 نقاط\\n/top — أفضل 10 أعضاء\\n/whisper @username نص — أرسل همسة خاصة");
+    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\\n/quiz — سؤال سريع بأربع إجابات\\n/cars — تحدي معلومات السيارات\\n/rps — حجر ورقة مقص ضد البوت (لصاحب التحدي)\\n/truth — صراحة عشوائية\\n/wyr — هذا أم ذاك؟\\n/coin — رمية عملة\\n/checkin — حضور يومي +5 نقاط\\n/top — أفضل 10 أعضاء\\n/whisper @username نص — أرسل همسة خاصة");
     return true;
   }
   if (["/quiz", "!quiz", "/cars", "/سيارات"].includes(command)) {
@@ -282,6 +302,40 @@ async function handleCommands(env, message, member) {
     await sendText(env, chatId, (command === "/cars" || command === "/سيارات" ? "🚘 " : "🧠 ") + "<b>" + escapeHtml(question.q) + "</b>", {
       reply_markup: { inline_keyboard: [question.a.map((answer, index) => ({ text: answer, callback_data: "quiz:" + id + ":" + index }))] }
     });
+    return true;
+  }
+  if (command === "/truth" || command === "!truth" || command === "/صراحة") {
+    const prompts = [
+      "ما أكثر قرار اتخذته وتمنيت لو فكرت فيه أكثر؟",
+      "ما عادة غريبة لا يعرفها عنك معظم أصدقائك؟",
+      "ما أكثر موقف محرج ما زلت تتذكره؟",
+      "ما صفة فيك تحاول تغييرها؟",
+      "من الشخص الذي تفهمه دون أن يتكلم؟",
+      "ما شيء تتظاهر أنك لا تهتم به بينما تهتم فعلاً؟",
+      "ما أكثر مجاملة بقيت في ذاكرتك؟",
+      "لو استطعت الاعتذار لشخص واحد، فمن سيكون؟"
+    ];
+    await sendText(env, chatId, "🎭 <b>سؤال صراحة</b>\\n" + escapeHtml(prompts[Math.floor(Math.random() * prompts.length)]));
+    return true;
+  }
+  if (["/wyr", "!wyr", "/thisorthat", "/هذاامذاك"].includes(command)) {
+    const pairs = [
+      ["السفر عبر الزمن", "السفر إلى الفضاء"],
+      ["قراءة الأفكار", "الاختفاء"],
+      ["العيش بلا موسيقى", "العيش بلا أفلام"],
+      ["معرفة المستقبل", "تغيير الماضي"],
+      ["الشهرة", "الثروة"],
+      ["مدينة بلا إنترنت", "غابة بلا كهرباء"],
+      ["أن تكون الأذكى", "أن تكون الأكثر حظاً"],
+      ["إجازة سنة كاملة", "راتب مضاعف مدى الحياة"]
+    ];
+    const pair = pairs[Math.floor(Math.random() * pairs.length)];
+    await sendText(env, chatId, "⚖️ <b>هذا أم ذاك؟</b>\\n1️⃣ " + escapeHtml(pair[0]) + "\\nأم\\n2️⃣ " + escapeHtml(pair[1]) + "\\nاكتب اختيارك في المجموعة.");
+    return true;
+  }
+  if (["/coin", "!coin", "/عملة"].includes(command)) {
+    const side = Math.random() < 0.5 ? "🪙 صورة" : "🪙 كتابة";
+    await sendText(env, chatId, "رونين رمى العملة...\\n<b>" + side + "</b>");
     return true;
   }
   if (["/rps", "!rps", "/حجره", "/حجر"].includes(command)) {
