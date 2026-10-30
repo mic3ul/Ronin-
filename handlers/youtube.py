@@ -22,7 +22,7 @@ def _duration(seconds: int | float | None) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
-@router.message(Command("yt", "youtube", "يوت", "يوتيوب", "بحث"))
+@router.message(Command("yt", "youtube", "يوت", "يوتيوب", "بحث", prefix="/!"))
 async def youtube_search_command(message: Message) -> None:
     """Find YouTube videos from a short text query."""
     query = (message.text or "").partition(" ")[2].strip()
