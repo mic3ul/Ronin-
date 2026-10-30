@@ -70,7 +70,6 @@ def create_webhook_app() -> tuple[web.Application, Bot]:
         logger.info("Telegram webhook registered through Cloudflare Worker")
 
     app.on_startup.append(set_telegram_webhook)
-    app.on_cleanup.append(lambda _: bot.session.close())
     return app, bot
 
 
