@@ -116,7 +116,7 @@ async function rankLevel(env, chatId, userId) {
   return RANKS[rank].level;
 }
 function parseModerationDuration(value) {
-  const match=String(value||"").match(/^(\\d{1,5})(s|m|h|d)?$/i);
+  const match=String(value||"").match(/^(\d{1,5})(s|m|h|d)?$/i);
   if(!match) return 3600;
   const factor=({s:1,m:60,h:3600,d:86400})[(match[2]||"m").toLowerCase()];
   return Math.min(2592000,Math.max(30,Number(match[1])*factor));
