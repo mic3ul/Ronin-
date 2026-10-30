@@ -18,6 +18,9 @@ export function isDrugSpam(value) {
   return /^(?:(?:на\s+)?проб[ау]|\d{1,2}(?:[.,]\d{1,2})?\s*(?:гр|г|gr|g)|(?:(?:на\s+)?проб[ау])\s+\d{1,2}(?:[.,]\d{1,2})?\s*(?:гр|г|gr|g)|\d{1,2}(?:[.,]\d{1,2})?\s*(?:гр|г|gr|g)\s+(?:на\s+)?проб[ау])$/u.test(normalized);
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"]/g, (char) => char === "&" ? "&amp;" : char === "<" ? "&lt;" : char === ">" ? "&gt;" : "&quot;");
+}
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 }
@@ -77,8 +80,8 @@ async function recordViolation(db, userId, reason) {
 async function logModeration(env, chat, user, reason, text) {
   if (!env.LOGS_CHAT_ID) return;
   const excerpt = String(text || "").slice(0, 400).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
-  const name = [user.first_name, user.last_name].filter(Boolean).join(" ").slice(0, 80);
-  await sendText(env, env.LOGS_CHAT_ID, "<b>Ronin moderation</b>\nReason: " + reason + "\nChat: " + (chat.title || chat.id) + "\nUser: " + name + " (<code>" + user.id + "</code>)\n<code>" + excerpt + "</code>");
+  const name = escapeHtml([user.first_name, user.last_name].filter(Boolean).join(" ").slice(0, 80));
+  await sendText(env, env.LOGS_CHAT_ID, "<b>Ronin moderation</b>\nReason: " + reason + "\nChat: " + escapeHtml(chat.title || chat.id) + "\nUser: " + name + " (<code>" + user.id + "</code>)\n<code>" + excerpt + "</code>");
 }
 async function maybeAutoBan(env, chatId, userId, member) {
   if (env.AUTOBAN_ENABLED !== "true") return;
@@ -97,7 +100,7 @@ async function checkBurst(env, db, message, member) {
   const prior = await db.prepare("SELECT chat_id FROM burst_alerts WHERE chat_id = ? AND alerted_at >= datetime('now', '-5 minutes')").bind(chatId).first();
   if (prior) return;
   await db.prepare("INSERT OR REPLACE INTO burst_alerts (chat_id, alerted_at) VALUES (?, CURRENT_TIMESTAMP)").bind(chatId).run();
-  if (env.LOGS_CHAT_ID) await sendText(env, env.LOGS_CHAT_ID, "⚠️ <b>Newcomer burst detected</b>\nChat: " + (message.chat.title || chatId) + "\nDistinct low-reputation users: " + result.total);
+  if (env.LOGS_CHAT_ID) await sendText(env, env.LOGS_CHAT_ID, "⚠️ <b>Newcomer burst detected</b>\nChat: " + escapeHtml(message.chat.title || chatId) + "\nDistinct low-reputation users: " + result.total);
   if (env.BURST_ACTION === "delete") await telegram(env, "deleteMessage", { chat_id: chatId, message_id: message.message_id });
 }
 async function handleCommands(env, message, member) {
@@ -107,7 +110,7 @@ async function handleCommands(env, message, member) {
   if (["/ping", "!ping"].includes(command)) { await sendText(env, chatId, "Ronin is online."); return true; }
   if (["/rules", "!rules", "/правила"].includes(command)) { await sendText(env, chatId, env.RULES_TEXT || "Please follow the group rules and respect other members."); return true; }
   if (["/me", "!me", "/info", "/lvl"].includes(command)) {
-    await sendText(env, chatId, "<b>" + (message.from.first_name || "Member") + "</b>\nMessages: " + member.message_count + "\nReputation: " + member.reputation_points + "\nSpam violations: " + member.spam_violations + "\nProfanity violations: " + member.profanity_violations);
+    await sendText(env, chatId, "<b>" + escapeHtml(message.from.first_name || "Member") + "</b>\nMessages: " + member.message_count + "\nReputation: " + member.reputation_points + "\nSpam violations: " + member.spam_violations + "\nProfanity violations: " + member.profanity_violations);
     return true;
   }
   if (command === "/report" || command === "!report") {
@@ -118,7 +121,7 @@ async function handleCommands(env, message, member) {
     }
     if (await isChatAdmin(env, chatId, target.from.id).catch(() => false)) { await sendText(env, chatId, "Administrators cannot be reported."); return true; }
     const note = await sendText(env, env.REPORTS_CHAT_ID,
-      "<b>New report</b>\nChat: " + (message.chat.title || chatId) + "\nReported user: " + (target.from.first_name || "Member") + " (<code>" + target.from.id + "</code>)\nReporter: <code>" + message.from.id + "</code>\nMessage: " + getText(target).slice(0, 600),
+      "<b>New report</b>\nChat: " + (message.chat.title || chatId) + "\nReported user: " + escapeHtml(target.from.first_name || "Member") + " (<code>" + target.from.id + "</code>)\nReporter: <code>" + message.from.id + "</code>\nMessage: " + escapeHtml(getText(target).slice(0, 600)),
       { reply_markup: { inline_keyboard: [[
         { text: "Delete", callback_data: "report_del|" + chatId + "|" + target.message_id + "|" + target.from.id },
         { text: "Ban + delete", callback_data: "report_ban|" + chatId + "|" + target.message_id + "|" + target.from.id },
