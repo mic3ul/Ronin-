@@ -118,7 +118,7 @@ async def youtube_play_command(message: Message, command: CommandObject) -> None
         await status.edit_text("⬇️ أجهّز الملف الصوتي…")
         audio_path, title = await download_youtube_audio(selected["url"])
         await message.answer_audio(
-            audio=FSInputFile(audio_path, filename=f"{title}.mp3"),
+            audio=FSInputFile(audio_path, filename="ronin-track.mp3"),
             title=title,
             performer=selected.get("channel") or None,
             caption=f"🎵 <b>{html.escape(title)}</b>\n"
