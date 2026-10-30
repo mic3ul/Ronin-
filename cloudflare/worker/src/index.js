@@ -112,6 +112,13 @@ const QUIZ_BANK = [
   { q: "كم دقيقة في ساعتين؟", a: ["60", "90", "100", "120"], correct: 3 },
   { q: "ما أكبر محيط على الأرض؟", a: ["الأطلسي", "الهندي", "الهادئ", "المتجمد"], correct: 2 },
 ];
+const CAR_QUIZ_BANK = [
+  { q: "أي شركة تصنع سيارة كورولا؟", a: ["هوندا", "تويوتا", "نيسان", "مازدا"], correct: 1 },
+  { q: "ما بلد منشأ مرسيدس-بنز؟", a: ["إيطاليا", "فرنسا", "ألمانيا", "السويد"], correct: 2 },
+  { q: "أي شركة تنتج موستانغ؟", a: ["فورد", "شيفروليه", "دودج", "جيب"], correct: 0 },
+  { q: "ما نوع الوقود الذي تستخدمه سيارة كهربائية بالكامل؟", a: ["ديزل", "بنزين", "كهرباء", "غاز"], correct: 2 },
+  { q: "لامبورغيني شركة إيطالية أم ألمانية؟", a: ["إيطالية", "ألمانية", "يابانية", "بريطانية"], correct: 0 },
+];
 const RPS = ["حجر 🪨", "ورقة 📄", "مقص ✂️"];
 async function createGame(env, chatId, userId, type, payload) {
   const result = await env.DB.prepare("INSERT INTO game_sessions (chat_id, creator_user_id, game_type, payload) VALUES (?, ?, ?, ?)").bind(chatId, userId, type, JSON.stringify(payload)).run();
@@ -271,6 +278,23 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (command === "/whisper" || command === "!whisper" || command === "/همسة") return handleWhisper(env, message, text);
+  if (["/checkin", "!checkin", "/حضور"].includes(command)) {
+    const result = await env.DB.prepare("INSERT OR IGNORE INTO daily_checkins (chat_id, user_id, checkin_date, reward) VALUES (?, ?, date('now'), 5)").bind(chatId, message.from.id).run();
+    if (!result.meta || result.meta.changes === 0) {
+      await sendText(env, chatId, "سجلت حضورك اليوم بالفعل. ارجع بكرة وخذ نقاطك.");
+    } else {
+      await ensureMember(env.DB, message.from.id);
+      await env.DB.prepare("UPDATE members SET reputation_points=reputation_points+5 WHERE user_id=?").bind(message.from.id).run();
+      await sendText(env, chatId, "☀️ تم تسجيل حضورك اليومي! حصلت على +5 نقاط.");
+    }
+    return true;
+  }
+  if (["/top", "!top", "/المتصدرين"].includes(command)) {
+    const rows = await env.DB.prepare("SELECT user_id, reputation_points, message_count FROM members ORDER BY reputation_points DESC, message_count DESC LIMIT 10").all();
+    const lines = (rows.results || []).map((row, i) => (i + 1) + ". <code>" + row.user_id + "</code> — " + row.reputation_points + " نقطة");
+    await sendText(env, chatId, "🏆 <b>أفضل 10 أعضاء</b>\\n" + (lines.length ? lines.join("\\n") : "لا توجد نتائج بعد."));
+    return true;
+  }
   if (["/ban", "!ban", "/unban", "!unban"].includes(command)) {
     if (!message.reply_to_message || !message.reply_to_message.from || !await isChatAdmin(env, chatId, message.from.id).catch(() => false)) return true;
     const targetId = message.reply_to_message.from.id;
