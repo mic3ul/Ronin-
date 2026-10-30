@@ -73,8 +73,8 @@ async function sendText(env, chatId, text, extra = {}) {
 async function sendRoninWelcome(env, chatId, group = false) {
   const caption = group
     ? "⚔️ <b>رونين وصل للمجموعة</b>\\nأنا Ronin، رفيقكم للألعاب والتفاعل وإدارة المجموعة. استخدموا الأزرار بالأسفل أو /help لعرض الأوامر."
-    : "⚔️ <b>أهلاً بك في Ronin</b>\\nأنا رفيقك للألعاب والتفاعل والهمسات الخاصة. استخدم الأزرار بالأسفل للتنقل.";
-  const extra = { reply_markup: RONIN_KEYBOARD };
+    : "⚔️ <b>أهلاً بك في Ronin</b>\\nأنا رفيقك في المجموعات. لإرسال همسة استخدم /whisper @username النص.";
+  const extra = group ? { reply_markup: RONIN_KEYBOARD } : {};
   try {
     const me = await telegram(env, "getMe", {});
     const photos = await telegram(env, "getUserProfilePhotos", { user_id: me.id, limit: 1 });
