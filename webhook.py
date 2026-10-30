@@ -2,7 +2,7 @@
 
 The Worker is the public Telegram endpoint. This Python process remains the
 feature engine so the existing aiogram handlers, middleware, database layer,
-scheduler, ML models, and media tools keep their current behavior.
+scheduler, ML models, and moderation services keep their current behavior.
 """
 import logging
 import os

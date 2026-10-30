@@ -1,8 +1,19 @@
+import importlib.util
+from pathlib import Path
+
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from services.healthcheck import HealthCheckServer, register_health_routes
+# Avoid importing services/__init__.py, which loads the whole application and
+# its optional configuration/ML dependencies during this isolated unit test.
+MODULE_PATH = Path(__file__).resolve().parents[1] / "services" / "healthcheck.py"
+SPEC = importlib.util.spec_from_file_location("ronin_healthcheck", MODULE_PATH)
+healthcheck = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(healthcheck)
+
+HealthCheckServer = healthcheck.HealthCheckServer
+register_health_routes = healthcheck.register_health_routes
 
 
 @pytest.mark.asyncio
