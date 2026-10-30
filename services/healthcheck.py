@@ -107,3 +107,10 @@ async def stop_health_server() -> None:
     if _health_server:
         await _health_server.stop()
         _health_server = None
+
+
+def register_health_routes(app: web.Application, server: HealthCheckServer | None = None) -> None:
+    """Mount health and readiness endpoints on an existing aiohttp app."""
+    health_server = server or get_health_server()
+    app.router.add_get("/health", health_server._health_handler)
+    app.router.add_get("/ready", health_server._ready_handler)
