@@ -354,29 +354,30 @@ https://huggingface.co/prithivMLmods/siglip2-x256-explicit-content - Our current
 (C) 2026 Abraham Tugalov
 
 
-## Cloudflare webhook gateway
+## Cloudflare-native runtime
 
-Ronin includes an optional Cloudflare Workers gateway for Telegram webhook
-delivery. It preserves the existing Python/aiogram handlers and processing
-pipeline; the Worker validates Telegram's webhook secret and forwards updates
-to the Python origin. This means moderation, reputation, reports, scheduled
-announcements, ML checks, and YouTube features are not replaced with reduced
-Worker implementations.
+Ronin includes a native Cloudflare Workers runtime backed by D1. It handles
+Telegram webhook updates directly through the Telegram Bot API and persists
+member reputation, moderation counters, reports, and update deduplication in
+D1. It does not need a Python origin, Docker container, or Workers Paid plan.
 
-See [cloudflare/worker/README.md](cloudflare/worker/README.md) for deployment
-instructions and required environment variables. Run the Python webhook
-backend with `python webhook.py` and configure the Worker with
-`TELEGRAM_WEBHOOK_SECRET` and `BACKEND_URL`.
+The native Worker currently covers core moderation (low-reputation links,
+media and single-emoji restrictions, known spam patterns, short drug-bait
+detection), reputation tracking, newcomer-burst detection, reports, and
+basic moderation commands. The original Python/aiogram runtime remains
+available for self-hosting and retains additional capabilities that have not
+yet been ported: PyTorch/Transformers spam and NSFW models, full Censure/Fluent
+localization, gender/profile-photo checks, retrospective message cleanup,
+reactions, scheduled announcements, and some legacy commands.
 
-**Runtime and storage boundary:** the Worker is only the webhook edge. The full
-Python application can also be packaged for Cloudflare Containers, which run
-Linux images but require the Workers Paid plan. This route has not been validated
-for Ronin yet. Container-local filesystems are ephemeral, so the default
-SQLite file must not be used as the production database. Use an external durable
-SQL database, or implement and test a D1 adapter; D1 is not a drop-in replacement
-for the current Ormar/SQLAlchemy SQLite URL. The current MySQL driver entries
-are optional and must be installed and tested before using a remote MySQL URL.
+See [cloudflare/worker/README.md](cloudflare/worker/README.md) for the Cloudflare
+setup. The D1 database is bound in Wrangler configuration. Configure
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` as Worker secrets, then set
+`MAIN_GROUP_IDS`, report/log destinations, and moderation thresholds as
+non-secret Worker variables. Apply the D1 migration before deploying.
 
-Do not call Ronin deployed until a real container/origin, durable database,
-Cloudflare Secrets, webhook delivery, and live Telegram update processing have
-all been verified.
+The deployment does not automatically register Telegram's webhook. Configure
+and test the Worker first, then stop the polling instance and register the
+webhook. Do not run polling and webhook delivery simultaneously for the same
+bot. The Cloudflare implementation is a staged native port, not yet feature-
+identical to the full Python runtime.
