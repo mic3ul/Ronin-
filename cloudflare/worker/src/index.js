@@ -70,12 +70,18 @@ async function ensureMember(db, userId) {
 async function getMember(db, userId) {
   return db.prepare("SELECT user_id, message_count, reputation_points, profanity_violations, spam_violations FROM members WHERE user_id = ?").bind(userId).first();
 }
-async function recordClean(db, userId) {
-  await db.prepare("UPDATE members SET message_count = message_count + 1, reputation_points = reputation_points + 1, last_seen_at = CURRENT_TIMESTAMP WHERE user_id = ?").bind(userId).run();
+async function ensureGroupMember(db, chatId, user) {
+  await db.prepare("INSERT INTO group_members (chat_id, user_id, first_name, username) VALUES (?, ?, ?, ?) ON CONFLICT(chat_id, user_id) DO UPDATE SET first_name=excluded.first_name, username=excluded.username, last_seen_at=CURRENT_TIMESTAMP")
+    .bind(chatId, user.id, user.first_name || "", user.username || null).run();
 }
-async function recordViolation(db, userId, reason) {
+async function recordClean(db, userId, chatId) {
+  await db.prepare("UPDATE members SET message_count = message_count + 1, reputation_points = reputation_points + 1, last_seen_at = CURRENT_TIMESTAMP WHERE user_id = ?").bind(userId).run();
+  await db.prepare("UPDATE group_members SET message_count=message_count+1, reputation_points=reputation_points+1, last_seen_at=CURRENT_TIMESTAMP WHERE chat_id=? AND user_id=?").bind(chatId, userId).run();
+}
+async function recordViolation(db, userId, reason, chatId) {
   const column = reason === "profanity" ? "profanity_violations" : "spam_violations";
   await db.prepare("UPDATE members SET " + column + " = " + column + " + 1, reputation_points = MAX(-5000, reputation_points - 10), last_seen_at = CURRENT_TIMESTAMP WHERE user_id = ?").bind(userId).run();
+  await db.prepare("UPDATE group_members SET reputation_points=MAX(-5000, reputation_points-10), last_seen_at=CURRENT_TIMESTAMP WHERE chat_id=? AND user_id=?").bind(chatId, userId).run();
 }
 async function logModeration(env, chat, user, reason, text) {
   if (!env.LOGS_CHAT_ID) return;
@@ -197,7 +203,9 @@ async function handleNewCallback(env, callback) {
     await env.DB.prepare("UPDATE game_sessions SET status='finished', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(id).run();
     if (correct) {
       await ensureMember(env.DB, callback.from.id);
+      await ensureGroupMember(env.DB, callback.message.chat.id, callback.from);
       await env.DB.prepare("UPDATE members SET reputation_points=reputation_points+3 WHERE user_id=?").bind(callback.from.id).run();
+      await env.DB.prepare("UPDATE group_members SET reputation_points=reputation_points+3 WHERE chat_id=? AND user_id=?").bind(callback.message.chat.id, callback.from.id).run();
     }
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: correct ? "إجابة صحيحة! +3 نقاط" : "إجابة خاطئة، حاول مرة أخرى في الجولة القادمة." });
     await telegram(env, "editMessageText", {
@@ -220,7 +228,9 @@ async function handleNewCallback(env, callback) {
     await env.DB.prepare("UPDATE game_sessions SET status='finished', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(id).run();
     if (outcome.startsWith("فزت")) {
       await ensureMember(env.DB, callback.from.id);
+      await ensureGroupMember(env.DB, callback.message.chat.id, callback.from);
       await env.DB.prepare("UPDATE members SET reputation_points=reputation_points+2 WHERE user_id=?").bind(callback.from.id).run();
+      await env.DB.prepare("UPDATE group_members SET reputation_points=reputation_points+2 WHERE chat_id=? AND user_id=?").bind(callback.message.chat.id, callback.from.id).run();
     }
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: outcome });
     await telegram(env, "editMessageText", {
@@ -292,14 +302,16 @@ async function handleCommands(env, message, member) {
       await sendText(env, chatId, "سجلت حضورك اليوم بالفعل. ارجع بكرة وخذ نقاطك.");
     } else {
       await ensureMember(env.DB, message.from.id);
+      await ensureGroupMember(env.DB, chatId, message.from);
       await env.DB.prepare("UPDATE members SET reputation_points=reputation_points+5 WHERE user_id=?").bind(message.from.id).run();
+      await env.DB.prepare("UPDATE group_members SET reputation_points=reputation_points+5 WHERE chat_id=? AND user_id=?").bind(chatId, message.from.id).run();
       await sendText(env, chatId, "☀️ تم تسجيل حضورك اليومي! حصلت على +5 نقاط.");
     }
     return true;
   }
   if (["/top", "!top", "/المتصدرين"].includes(command)) {
-    const rows = await env.DB.prepare("SELECT user_id, reputation_points, message_count FROM members ORDER BY reputation_points DESC, message_count DESC LIMIT 10").all();
-    const lines = (rows.results || []).map((row, i) => (i + 1) + ". <code>" + row.user_id + "</code> — " + row.reputation_points + " نقطة");
+    const rows = await env.DB.prepare("SELECT user_id, first_name, username, reputation_points, message_count FROM group_members WHERE chat_id=? ORDER BY reputation_points DESC, message_count DESC LIMIT 10").bind(chatId).all();
+    const lines = (rows.results || []).map((row, i) => (i + 1) + ". " + escapeHtml(row.first_name || (row.username ? "@" + row.username : "عضو")) + " — " + row.reputation_points + " نقطة");
     await sendText(env, chatId, "🏆 <b>أفضل 10 أعضاء</b>\\n" + (lines.length ? lines.join("\\n") : "لا توجد نتائج بعد."));
     return true;
   }
@@ -338,6 +350,7 @@ async function handleMessage(env, message, edited = false) {
   if (!parseIds(env.MAIN_GROUP_IDS).has(Number(message.chat.id))) return;
   const userId = message.from.id;
   await ensureMember(env.DB, userId);
+  await ensureGroupMember(env.DB, message.chat.id, message.from);
   let member = await getMember(env.DB, userId);
   if (!member) return;
   if (!edited && await handleCommands(env, message, member)) return;
@@ -348,9 +361,9 @@ async function handleMessage(env, message, edited = false) {
   const lowEmoji = isSingleEmoji(text) && member.reputation_points < Number(env.SINGLE_EMOJI_REP_THRESHOLD || DEFAULTS.emoji);
   const moderationReason = reason || (lowMedia ? "media from low-reputation account" : null) || (lowLink ? "link from low-reputation account" : null) || (lowEmoji ? "single-emoji spam" : null);
   if (moderationReason) {
-    if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) { if (!edited) await recordClean(env.DB, userId); return; }
+    if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) { if (!edited) await recordClean(env.DB, userId, message.chat.id); return; }
     await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id }).catch(() => null);
-    await recordViolation(env.DB, userId, moderationReason === "profanity" ? "profanity" : "spam");
+    await recordViolation(env.DB, userId, moderationReason === "profanity" ? "profanity" : "spam", message.chat.id);
     member = await getMember(env.DB, userId);
     await logModeration(env, message.chat, message.from, moderationReason, text).catch(() => null);
     if (member) await maybeAutoBan(env, message.chat.id, userId, member).catch(() => null);
@@ -363,6 +376,9 @@ async function handleMessage(env, message, edited = false) {
 async function processUpdate(update, env) {
   if (update.message && update.message.chat && update.message.chat.type === "private") {
     await registerPrivateUser(env, update.message.from);
+    if ((update.message.text || "").trim().split(/\s+/)[0] === "/start") {
+      await sendText(env, update.message.chat.id, "أهلاً بك في Ronin. الآن يمكنك استقبال الهمسات الخاصة من أعضاء المجموعات التي يعمل فيها البوت. لإرسال همسة: /whisper @username النص");
+    }
   }
   if (update.message) await handleMessage(env, update.message);
   if (update.edited_message) await handleMessage(env, update.edited_message, true);
