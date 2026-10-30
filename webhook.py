@@ -18,7 +18,7 @@ from bot import on_shutdown, on_startup
 from config import config
 from handlers import register_all_handlers
 from middlewares import register_all_middlewares
-from services.healthcheck import get_health_server
+from services.healthcheck import get_health_server, register_health_routes
 
 logger = logging.getLogger(__name__)
 WEBHOOK_PATH = "/telegram/webhook"
@@ -68,8 +68,7 @@ def create_webhook_app() -> tuple[web.Application, Bot]:
             host=config.healthcheck.host,
             port=config.healthcheck.port,
         )
-        app.router.add_get("/health", health._health_handler)
-        app.router.add_get("/ready", health._ready_handler)
+        register_health_routes(app, health)
 
     async def set_telegram_webhook(_: web.Application) -> None:
         # This runs after aiogram's startup hook has initialized the DB/services.
