@@ -6,6 +6,7 @@ scheduler, and media tools keep their current behavior.
 """
 import logging
 import os
+import re
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -19,20 +20,20 @@ from handlers import register_all_handlers
 from middlewares import register_all_middlewares
 
 logger = logging.getLogger(__name__)
+WEBHOOK_PATH = "/telegram/webhook"
 
 
 def create_webhook_app() -> tuple[web.Application, Bot]:
     token = config.bot.token.get_secret_value()
     webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL", "").rstrip("/")
     secret = os.environ.get("WEBHOOK_SECRET", "")
-    path = os.environ.get("WEBHOOK_PATH", "/telegram/webhook")
 
     if not token:
         raise RuntimeError("BOT_TOKEN is required")
     if not webhook_url.startswith("https://"):
         raise RuntimeError("TELEGRAM_WEBHOOK_URL must be the HTTPS Cloudflare Worker URL")
-    if not secret or not (1 <= len(secret) <= 256):
-        raise RuntimeError("WEBHOOK_SECRET must contain 1-256 characters")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", secret):
+        raise RuntimeError("WEBHOOK_SECRET must use 1-256 Telegram-supported characters")
 
     bot = Bot(
         token=token,
@@ -56,12 +57,12 @@ def create_webhook_app() -> tuple[web.Application, Bot]:
         dispatcher=dispatcher,
         bot=bot,
         secret_token=secret,
-    ).register(app, path=path)
+    ).register(app, path=WEBHOOK_PATH)
     setup_application(app, dispatcher, bot=bot)
 
     async def set_telegram_webhook(_: web.Application) -> None:
         await bot.set_webhook(
-            url=f"{webhook_url}{path}",
+            url=f"{webhook_url}{WEBHOOK_PATH}",
             secret_token=secret,
             allowed_updates=dispatcher.resolve_used_update_types(),
             drop_pending_updates=False,

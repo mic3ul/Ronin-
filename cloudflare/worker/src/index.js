@@ -60,15 +60,26 @@ export default {
       return json({ error: "payload_too_large" }, 413);
     }
 
+    let body;
+    try {
+      body = await request.arrayBuffer();
+    } catch {
+      return json({ error: "invalid_payload" }, 400);
+    }
+    if (body.byteLength > MAX_BODY_BYTES) {
+      return json({ error: "payload_too_large" }, 413);
+    }
+
     const headers = new Headers(request.headers);
     headers.delete("host");
+    headers.delete("content-length");
     headers.set("X-Ronin-Edge", "cloudflare");
 
     try {
       const upstream = await fetch(new URL(WEBHOOK_PATH, backend.origin), {
         method: "POST",
         headers,
-        body: request.body,
+        body,
         redirect: "manual",
       });
 
