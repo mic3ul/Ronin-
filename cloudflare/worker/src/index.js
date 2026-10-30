@@ -307,6 +307,7 @@ async function handleCommands(env, message, member) {
   return false;
 }
 async function handleCallback(env, callback) {
+  if (await handleNewCallback(env, callback)) return;
   const parts = (callback.data || "").split("|");
   const action = parts[0];
   if (action === "report_dismiss") {
@@ -352,6 +353,9 @@ async function handleMessage(env, message, edited = false) {
   if (!edited && member) await checkBurst(env, env.DB, message, member).catch(() => null);
 }
 async function processUpdate(update, env) {
+  if (update.message && update.message.chat && update.message.chat.type === "private") {
+    await registerPrivateUser(env, update.message.from);
+  }
   if (update.message) await handleMessage(env, update.message);
   if (update.edited_message) await handleMessage(env, update.edited_message, true);
   if (update.callback_query) await handleCallback(env, update.callback_query);
