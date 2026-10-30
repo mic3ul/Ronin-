@@ -70,6 +70,14 @@ async function ensureMember(db, userId) {
 async function getMember(db, userId) {
   return db.prepare("SELECT user_id, message_count, reputation_points, profanity_violations, spam_violations FROM members WHERE user_id = ?").bind(userId).first();
 }
+
+export function getProfileLevel(points) {
+  const xp = Math.max(0, Number(points) || 0);
+  const level = Math.floor(Math.sqrt(xp / 50)) + 1;
+  const currentFloor = (level - 1) ** 2 * 50;
+  const nextFloor = level ** 2 * 50;
+  return { level, currentXp: xp - currentFloor, nextLevelXp: nextFloor - currentFloor, remainingXp: Math.max(0, nextFloor - xp) };
+}
 async function ensureGroupMember(db, chatId, user) {
   await db.prepare("INSERT INTO group_members (chat_id, user_id, first_name, username) VALUES (?, ?, ?, ?) ON CONFLICT(chat_id, user_id) DO UPDATE SET first_name=excluded.first_name, username=excluded.username, last_seen_at=CURRENT_TIMESTAMP")
     .bind(chatId, user.id, user.first_name || "", user.username || null).run();
@@ -273,6 +281,35 @@ async function handleCommands(env, message, member) {
     await sendText(env, chatId, "<b>" + escapeHtml(message.from.first_name || "Member") + "</b>\nMessages: " + member.message_count + "\nReputation: " + member.reputation_points + "\nSpam violations: " + member.spam_violations + "\nProfanity violations: " + member.profanity_violations);
     return true;
   }
+  if (["/profile", "!profile", "/بروفايل", "/ملفي", "/rank"].includes(command)) {
+    const row = await env.DB.prepare("SELECT first_name, username, message_count, reputation_points FROM group_members WHERE chat_id=? AND user_id=?").bind(chatId, message.from.id).first();
+    const profile = row || { first_name: message.from.first_name || "Member", username: message.from.username || null, message_count: 0, reputation_points: 0 };
+    const level = getProfileLevel(profile.reputation_points);
+    const rankRow = await env.DB.prepare("SELECT COUNT(*) + 1 AS rank FROM group_members WHERE chat_id=? AND (reputation_points > ? OR (reputation_points = ? AND message_count > ?))").bind(chatId, profile.reputation_points, profile.reputation_points, profile.message_count).first();
+    const badges = [];
+    if (profile.message_count >= 10) badges.push("💬 متفاعل");
+    if (profile.message_count >= 100) badges.push("🗣️ صوت المجموعة");
+    if (profile.reputation_points >= 100) badges.push("⭐ موثوق");
+    if (profile.reputation_points >= 500) badges.push("🏅 نخبة رونين");
+    if (!badges.length) badges.push("🌱 عضو جديد");
+    await sendText(env, chatId,
+      "👤 <b>ملف العضو</b>\\n<b>" + escapeHtml(profile.first_name || "Member") + "</b>" +
+      (profile.username ? " · @" + escapeHtml(profile.username) : "") +
+      "\\n🏆 المستوى: <b>" + level.level + "</b> · الترتيب: <b>#" + (rankRow?.rank || 1) + "</b>" +
+      "\\n⭐ السمعة: <b>" + profile.reputation_points + "</b>" +
+      "\\n📈 التقدم: " + level.currentXp + " / " + level.nextLevelXp + " XP" +
+      "\\n💬 الرسائل: " + profile.message_count +
+      "\\n🎖️ الشارات: " + badges.join("، "));
+    return true;
+  }
+  if (["/id", "!id", "/ايدي"].includes(command)) {
+    await sendText(env, chatId, "🆔 <b>معرّف المجموعة:</b> <code>" + chatId + "</code>\\n<b>معرّفك:</b> <code>" + message.from.id + "</code>");
+    return true;
+  }
+  if (["/help", "!help", "/مساعدة"].includes(command)) {
+    await sendText(env, chatId, "🛡️ <b>مساعدة Ronin</b>\\n<b>الملف والتفاعل</b>\\n/profile — ملفك ومستواك وشاراتك\\n/top — المتصدرون\\n/checkin — حضور يومي\\n/id — معرّفات المجموعة والعضو\\n<b>الألعاب</b>\\n/games — قائمة الألعاب\\n/quiz — أسئلة عامة\\n/cars — معلومات السيارات\\n/rps — حجر ورقة مقص\\n/truth — صراحة\\n/wyr — هذا أم ذاك\\n/coin — رمية عملة\\n<b>الخصوصية</b>\\n/whisper @username نص — همسة خاصة\\n<b>الإدارة</b>\\n/report — بلاغ بالرد على رسالة\\n/rules — قوانين المجموعة");
+    return true;
+  }
   if (command === "/report" || command === "!report") {
     const target = message.reply_to_message;
     if (!target || !target.from || target.from.id === message.from.id || !env.REPORTS_CHAT_ID) {
@@ -292,7 +329,7 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/games", "!games", "/العاب", "/ألعاب"].includes(command)) {
-    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\\n/quiz — سؤال سريع بأربع إجابات\\n/cars — تحدي معلومات السيارات\\n/rps — حجر ورقة مقص ضد البوت (لصاحب التحدي)\\n/truth — صراحة عشوائية\\n/wyr — هذا أم ذاك؟\\n/coin — رمية عملة\\n/checkin — حضور يومي +5 نقاط\\n/top — أفضل 10 أعضاء\\n/whisper @username نص — أرسل همسة خاصة");
+    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\\n/profile — ملفك ومستواك وشاراتك\\n/id — معرّفات المجموعة والعضو\\n/help — كل الأوامر\\n/quiz — سؤال سريع بأربع إجابات\\n/cars — تحدي معلومات السيارات\\n/rps — حجر ورقة مقص ضد البوت (لصاحب التحدي)\\n/truth — صراحة عشوائية\\n/wyr — هذا أم ذاك؟\\n/coin — رمية عملة\\n/checkin — حضور يومي +5 نقاط\\n/top — أفضل 10 أعضاء\\n/whisper @username نص — أرسل همسة خاصة");
     return true;
   }
   if (["/quiz", "!quiz", "/cars", "/سيارات"].includes(command)) {
