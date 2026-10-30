@@ -33,7 +33,7 @@ Implemented in this first native port:
 - Newcomer-burst detection with configurable log/delete action.
 - `/ping`, `/rules`, `/me`, `/report`, `/ban`, and `/unban`.
 - Arabic group entertainment: `/games`, `/quiz`, car trivia (`/cars`), and `/rps` with inline answers.
-- Daily check-ins (`/checkin`) and a reputation leaderboard (`/top`).
+- Daily check-ins (`/checkin`) and a per-group reputation leaderboard (`/top`).
 - Private one-to-one whispers (`/whisper @username text`) with an explicit open button and an opened status.
 - Private `/start` registration so users can receive whispers; recipients must start the bot first.
 - Moderator report buttons, audit log output, and optional repeat-spam autoban.
