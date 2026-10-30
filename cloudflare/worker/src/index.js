@@ -103,6 +103,122 @@ async function checkBurst(env, db, message, member) {
   if (env.LOGS_CHAT_ID) await sendText(env, env.LOGS_CHAT_ID, "⚠️ <b>Newcomer burst detected</b>\nChat: " + escapeHtml(message.chat.title || chatId) + "\nDistinct low-reputation users: " + result.total);
   if (env.BURST_ACTION === "delete") await telegram(env, "deleteMessage", { chat_id: chatId, message_id: message.message_id });
 }
+
+const QUIZ_BANK = [
+  { q: "ما عاصمة السودان؟", a: ["الخرطوم", "مدني", "بورتسودان", "كسلا"], correct: 0 },
+  { q: "كم عدد أضلاع المثلث؟", a: ["2", "3", "4", "5"], correct: 1 },
+  { q: "ما الكوكب المعروف بالكوكب الأحمر؟", a: ["الزهرة", "المشتري", "المريخ", "زحل"], correct: 2 },
+  { q: "أي حيوان يُلقّب بسفينة الصحراء؟", a: ["الحصان", "الجمل", "الفيل", "الغزال"], correct: 1 },
+  { q: "كم دقيقة في ساعتين؟", a: ["60", "90", "100", "120"], correct: 3 },
+  { q: "ما أكبر محيط على الأرض؟", a: ["الأطلسي", "الهندي", "الهادئ", "المتجمد"], correct: 2 },
+];
+const RPS = ["حجر 🪨", "ورقة 📄", "مقص ✂️"];
+async function createGame(env, chatId, userId, type, payload) {
+  const result = await env.DB.prepare("INSERT INTO game_sessions (chat_id, creator_user_id, game_type, payload) VALUES (?, ?, ?, ?)").bind(chatId, userId, type, JSON.stringify(payload)).run();
+  return result.meta.last_row_id;
+}
+async function registerPrivateUser(env, user) {
+  if (!user || user.is_bot) return;
+  await env.DB.prepare("INSERT INTO private_users (user_id, username, first_name, chat_id) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name, chat_id=excluded.chat_id, updated_at=CURRENT_TIMESTAMP")
+    .bind(user.id, user.username ? user.username.toLowerCase() : null, user.first_name || "", user.id).run();
+}
+async function handleWhisper(env, message, text) {
+  const match = text.match(/^\\/whisper(?:@\\w+)?\\s+@([A-Za-z0-9_]{5,32})\\s+([\\s\\S]{1,700})$/i);
+  if (!match) {
+    await sendText(env, message.chat.id, "الاستخدام: /whisper @username نص الهمسة\\nلازم المستلم يكون فتح البوت وأرسل /start أولاً.");
+    return true;
+  }
+  const username = match[1].toLowerCase();
+  const recipient = await env.DB.prepare("SELECT user_id, first_name FROM private_users WHERE username = ?").bind(username).first();
+  if (!recipient) {
+    await sendText(env, message.chat.id, "ما لقيت @" + escapeHtml(username) + " ضمن مستخدمي البوت. خليه يفتح البوت ويرسل /start أولاً.");
+    return true;
+  }
+  if (Number(recipient.user_id) === Number(message.from.id)) {
+    await sendText(env, message.chat.id, "ما ممكن ترسل همسة لنفسك 🙂");
+    return true;
+  }
+  const result = await env.DB.prepare("INSERT INTO whispers (sender_user_id, recipient_user_id, body) VALUES (?, ?, ?)")
+    .bind(message.from.id, recipient.user_id, match[2].trim()).run();
+  const id = result.meta.last_row_id;
+  try {
+    await sendText(env, recipient.user_id, "📩 عندك همسة جديدة. اضغط لفتحها.", {
+      reply_markup: { inline_keyboard: [[{ text: "افتح الهمسة", callback_data: "whisper_open:" + id }]] }
+    });
+    await sendText(env, message.chat.id, "تم إرسال الهمسة إلى @" + escapeHtml(username) + " بشكل خاص.");
+  } catch {
+    await env.DB.prepare("UPDATE whispers SET status='failed' WHERE id=?").bind(id).run();
+    await sendText(env, message.chat.id, "تعذر إرسال الهمسة. المستلم قد يكون حظر البوت؛ خليه يرسل /start مجدداً.");
+  }
+  return true;
+}
+async function handleNewCallback(env, callback) {
+  const data = callback.data || "";
+  if (data.startsWith("whisper_open:")) {
+    const id = Number(data.split(":")[1]);
+    const whisper = await env.DB.prepare("SELECT * FROM whispers WHERE id=?").bind(id).first();
+    if (!whisper || Number(whisper.recipient_user_id) !== Number(callback.from.id)) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "هذه الهمسة ليست لك.", show_alert: true });
+      return true;
+    }
+    if (whisper.status === "opened") {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "سبق وفتحت الهمسة." });
+      return true;
+    }
+    await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(id).run();
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة." });
+    await sendText(env, callback.from.id, "💌 <b>همستك:</b>\\n" + escapeHtml(whisper.body));
+    return true;
+  }
+  if (data.startsWith("quiz:")) {
+    const [, rawId, rawChoice] = data.split(":");
+    const id = Number(rawId), choice = Number(rawChoice);
+    const game = await env.DB.prepare("SELECT * FROM game_sessions WHERE id=?").bind(id).first();
+    if (!game || game.status !== "active" || game.game_type !== "quiz") {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "انتهت هذه الجولة." });
+      return true;
+    }
+    const payload = JSON.parse(game.payload);
+    const correct = choice === payload.correct;
+    await env.DB.prepare("UPDATE game_sessions SET status='finished', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(id).run();
+    if (correct) {
+      await ensureMember(env.DB, callback.from.id);
+      await env.DB.prepare("UPDATE members SET reputation_points=reputation_points+3 WHERE user_id=?").bind(callback.from.id).run();
+    }
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: correct ? "إجابة صحيحة! +3 نقاط" : "إجابة خاطئة، حاول مرة أخرى في الجولة القادمة." });
+    await telegram(env, "editMessageText", {
+      chat_id: callback.message.chat.id, message_id: callback.message.message_id,
+      text: "🧠 <b>" + escapeHtml(payload.q) + "</b>\\nالإجابة الصحيحة: <b>" + escapeHtml(payload.a[payload.correct]) + "</b>\\nالفائز: " + (correct ? escapeHtml(callback.from.first_name || "لاعب") : "لا أحد"),
+      parse_mode: "HTML"
+    });
+    return true;
+  }
+  if (data.startsWith("rps:")) {
+    const [, rawId, rawChoice] = data.split(":");
+    const id = Number(rawId), choice = Number(rawChoice);
+    const game = await env.DB.prepare("SELECT * FROM game_sessions WHERE id=?").bind(id).first();
+    if (!game || game.status !== "active" || game.game_type !== "rps" || !Number.isInteger(choice) || choice < 0 || choice > 2) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "انتهت الجولة أو الاختيار غير صالح." });
+      return true;
+    }
+    const botChoice = Math.floor(Math.random() * 3);
+    const outcome = choice === botChoice ? "تعادل!" : (choice - botChoice + 3) % 3 === 1 ? "فزت! +2 نقاط" : "فاز البوت هذه المرة.";
+    await env.DB.prepare("UPDATE game_sessions SET status='finished', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'").bind(id).run();
+    if (outcome.startsWith("فزت")) {
+      await ensureMember(env.DB, callback.from.id);
+      await env.DB.prepare("UPDATE members SET reputation_points=reputation_points+2 WHERE user_id=?").bind(callback.from.id).run();
+    }
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: outcome });
+    await telegram(env, "editMessageText", {
+      chat_id: callback.message.chat.id, message_id: callback.message.message_id,
+      text: "✊ <b>حجر ورقة مقص</b>\\nاختيارك: " + RPS[choice] + "\\nاختيار البوت: " + RPS[botChoice] + "\\n<b>" + outcome + "</b>",
+      parse_mode: "HTML"
+    });
+    return true;
+  }
+  return false;
+}
+
 async function handleCommands(env, message, member) {
   const text = getText(message).trim();
   const command = (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
@@ -131,6 +247,30 @@ async function handleCommands(env, message, member) {
     await sendText(env, chatId, "Your report has been sent to the moderators.");
     return true;
   }
+  if (["/games", "!games", "/العاب", "/ألعاب"].includes(command)) {
+    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\\n/quiz — سؤال سريع بأربع إجابات\\n/rps — حجر ورقة مقص ضد البوت\\n/cars — معلومات سيارات وتحدي سريع\\n/whisper @username نص — أرسل همسة خاصة");
+    return true;
+  }
+  if (["/quiz", "!quiz", "/cars", "/سيارات"].includes(command)) {
+    const question = QUIZ_BANK[Math.floor(Math.random() * QUIZ_BANK.length)];
+    const id = await createGame(env, chatId, message.from.id, "quiz", question);
+    await sendText(env, chatId, (command === "/cars" || command === "/سيارات" ? "🚘 " : "🧠 ") + "<b>" + escapeHtml(question.q) + "</b>", {
+      reply_markup: { inline_keyboard: [question.a.map((answer, index) => ({ text: answer, callback_data: "quiz:" + id + ":" + index }))] }
+    });
+    return true;
+  }
+  if (["/rps", "!rps", "/حجره", "/حجر"].includes(command)) {
+    const id = await createGame(env, chatId, message.from.id, "rps", {});
+    await sendText(env, chatId, "✊ <b>حجر ورقة مقص</b>\\nاختر حركتك لمواجهة البوت:", {
+      reply_markup: { inline_keyboard: [[
+        { text: "حجر 🪨", callback_data: "rps:" + id + ":0" },
+        { text: "ورقة 📄", callback_data: "rps:" + id + ":1" },
+        { text: "مقص ✂️", callback_data: "rps:" + id + ":2" }
+      ]] }
+    });
+    return true;
+  }
+  if (command === "/whisper" || command === "!whisper" || command === "/همسة") return handleWhisper(env, message, text);
   if (["/ban", "!ban", "/unban", "!unban"].includes(command)) {
     if (!message.reply_to_message || !message.reply_to_message.from || !await isChatAdmin(env, chatId, message.from.id).catch(() => false)) return true;
     const targetId = message.reply_to_message.from.id;
