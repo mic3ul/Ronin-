@@ -57,8 +57,36 @@ async function telegram(env, method, payload) {
   if (!response.ok || data.ok === false) throw new Error("Telegram " + method + " failed: " + (data.description || response.status));
   return data.result;
 }
+const RONIN_KEYBOARD = {
+  keyboard: [
+    [{ text: "🎮 الألعاب" }, { text: "👤 ملفي" }, { text: "🏆 المتصدرون" }],
+    [{ text: "🧠 سؤال" }, { text: "🚘 سيارات" }, { text: "🎭 صراحة" }],
+    [{ text: "📅 حضوري" }, { text: "📜 المساعدة" }, { text: "🆔 ID" }]
+  ],
+  resize_keyboard: true,
+  is_persistent: true,
+  input_field_placeholder: "اختر أمراً من أزرار رونين"
+};
 async function sendText(env, chatId, text, extra = {}) {
   return telegram(env, "sendMessage", Object.assign({ chat_id: chatId, text, parse_mode: "HTML" }, extra));
+}
+async function sendRoninWelcome(env, chatId, group = false) {
+  const caption = group
+    ? "⚔️ <b>رونين وصل للمجموعة</b>\\nأنا Ronin، رفيقكم للألعاب والتفاعل وإدارة المجموعة. استخدموا الأزرار بالأسفل أو /help لعرض الأوامر."
+    : "⚔️ <b>أهلاً بك في Ronin</b>\\nأنا رفيقك للألعاب والتفاعل والهمسات الخاصة. استخدم الأزرار بالأسفل للتنقل.";
+  const extra = { reply_markup: RONIN_KEYBOARD };
+  try {
+    const me = await telegram(env, "getMe", {});
+    const photos = await telegram(env, "getUserProfilePhotos", { user_id: me.id, limit: 1 });
+    const photo = photos.photos?.[0]?.at(-1);
+    if (photo?.file_id) {
+      await telegram(env, "sendPhoto", { chat_id: chatId, photo: photo.file_id, caption, parse_mode: "HTML", ...extra });
+      return;
+    }
+  } catch (error) {
+    console.warn("Ronin profile photo unavailable; using text welcome", error);
+  }
+  await sendText(env, chatId, caption, extra);
 }
 async function isChatAdmin(env, chatId, userId) {
   const member = await telegram(env, "getChatMember", { chat_id: chatId, user_id: userId });
@@ -273,7 +301,12 @@ async function handleNewCallback(env, callback) {
 
 async function handleCommands(env, message, member) {
   const text = getText(message).trim();
-  const command = (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
+  const buttonCommands = {
+    "🎮 الألعاب": "/games", "👤 ملفي": "/profile", "🏆 المتصدرون": "/top",
+    "🧠 سؤال": "/quiz", "🚘 سيارات": "/cars", "🎭 صراحة": "/truth",
+    "📅 حضوري": "/checkin", "📜 المساعدة": "/help", "🆔 ID": "/id"
+  };
+  const command = buttonCommands[text] || (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
   const chatId = message.chat.id;
   if (["/ping", "!ping"].includes(command)) { await sendText(env, chatId, "Ronin is online."); return true; }
   if (["/rules", "!rules", "/правила"].includes(command)) { await sendText(env, chatId, env.RULES_TEXT || "Please follow the group rules and respect other members."); return true; }
@@ -438,7 +471,8 @@ async function handleCallback(env, callback) {
 }
 async function handleMessage(env, message, edited = false) {
   if (!message || !message.from || message.from.is_bot || !isGroup(message.chat)) return;
-  if (!parseIds(env.MAIN_GROUP_IDS).has(Number(message.chat.id))) return;
+  const registered = await env.DB.prepare("SELECT chat_id FROM allowed_groups WHERE chat_id=? AND active=1").bind(message.chat.id).first();
+  if (!registered) return;
   const userId = message.from.id;
   await ensureMember(env.DB, userId);
   await ensureGroupMember(env.DB, message.chat.id, message.from);
@@ -465,10 +499,26 @@ async function handleMessage(env, message, edited = false) {
   if (!edited && member) await checkBurst(env, env.DB, message, member).catch(() => null);
 }
 async function processUpdate(update, env) {
+  if (update.my_chat_member && isGroup(update.my_chat_member.chat)) {
+    const change = update.my_chat_member;
+    const status = change.new_chat_member?.status;
+    const isActive = status === "member" || status === "administrator" ||
+      (status === "restricted" && change.new_chat_member?.is_member === true);
+    if (isActive) {
+      await env.DB.prepare("INSERT INTO allowed_groups (chat_id, title, active) VALUES (?, ?, 1) ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title, active=1, updated_at=CURRENT_TIMESTAMP")
+        .bind(change.chat.id, change.chat.title || "").run();
+      const oldStatus = change.old_chat_member?.status;
+      const wasActive = oldStatus === "member" || oldStatus === "administrator" ||
+        (oldStatus === "restricted" && change.old_chat_member?.is_member === true);
+      if (!wasActive) await sendRoninWelcome(env, change.chat.id, true);
+    } else if (status === "left" || status === "kicked") {
+      await env.DB.prepare("UPDATE allowed_groups SET active=0, updated_at=CURRENT_TIMESTAMP WHERE chat_id=?").bind(change.chat.id).run();
+    }
+  }
   if (update.message && update.message.chat && update.message.chat.type === "private") {
     await registerPrivateUser(env, update.message.from);
     if ((update.message.text || "").trim().split(/\s+/)[0] === "/start") {
-      await sendText(env, update.message.chat.id, "أهلاً بك في Ronin. الآن يمكنك استقبال الهمسات الخاصة من أعضاء المجموعات التي يعمل فيها البوت. لإرسال همسة: /whisper @username النص");
+      await sendRoninWelcome(env, update.message.chat.id, false);
     }
   }
   if (update.message) await handleMessage(env, update.message);
@@ -487,7 +537,7 @@ export default {
         await telegram(env, "setWebhook", {
           url: url.origin + WEBHOOK_PATH,
           secret_token: env.TELEGRAM_WEBHOOK_SECRET,
-          allowed_updates: ["message", "edited_message", "callback_query"],
+          allowed_updates: ["message", "edited_message", "callback_query", "my_chat_member"],
           drop_pending_updates: false
         });
         const webhook = await telegram(env, "getWebhookInfo", {});
