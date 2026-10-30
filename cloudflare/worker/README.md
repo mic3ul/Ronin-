@@ -32,7 +32,8 @@ Implemented in this first native port:
 - Optional profanity term matching via the `PROFANITY_TERMS` variable.
 - Newcomer-burst detection with configurable log/delete action.
 - `/ping`, `/rules`, `/me`, `/report`, `/ban`, and `/unban`.
-- Arabic group entertainment: `/games`, `/quiz`, car trivia (`/cars`), and `/rps` with inline answers.
+- Arabic group entertainment: `/games`, `/quiz`, car trivia (`/cars`), `/rps`, `/truth` (صراحة), `/wyr` (this-or-that), and `/coin` (coin toss).
+- Race-safe game completion: only the first valid quiz answer can claim a round; RPS is restricted to the player who started it.
 - Daily check-ins (`/checkin`) and a per-group reputation leaderboard (`/top`).
 - Private one-to-one whispers (`/whisper @username text`) with an explicit open button and an opened status.
 - Private `/start` registration so users can receive whispers; recipients must start the bot first.
@@ -101,7 +102,7 @@ Whispers are delivered only to users who have opened the bot and sent `/start`; 
 The initial configuration intentionally leaves `MAIN_GROUP_IDS` empty and
 autoban disabled so a fresh deployment cannot moderate an unintended group.
 
-Apply all checked-in migrations, including `0002_social_games_whispers.sql` and `0003_daily_checkins.sql`, before deploying the updated Worker. These migrations are additive and do not delete existing data.
+Apply all checked-in migrations, including `0002_social_games_whispers.sql`, `0003_daily_checkins.sql`, and `0004_group_leaderboard.sql`, before deploying the updated Worker. These migrations are additive and do not delete existing data.
 
 ### 4. Deploy the Worker
 
