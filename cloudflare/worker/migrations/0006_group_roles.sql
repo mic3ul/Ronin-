@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS group_roles (
   chat_id INTEGER NOT NULL,
   user_id INTEGER NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('rafiq','leader','moderator','assistant')),
+  role TEXT NOT NULL CHECK (role IN ('rafiq','thaer','mujahid','munadil','ansar')),
   granted_by INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
