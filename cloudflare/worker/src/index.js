@@ -369,7 +369,7 @@ async function handleMessage(env, message, edited = false) {
     if (member) await maybeAutoBan(env, message.chat.id, userId, member).catch(() => null);
     return;
   }
-  if (!edited) await recordClean(env.DB, userId);
+  if (!edited) await recordClean(env.DB, userId, message.chat.id);
   member = await getMember(env.DB, userId);
   if (!edited && member) await checkBurst(env, env.DB, message, member).catch(() => null);
 }
