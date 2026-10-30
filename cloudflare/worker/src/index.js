@@ -94,6 +94,32 @@ async function isChatAdmin(env, chatId, userId) {
   const member = await telegram(env, "getChatMember", { chat_id: chatId, user_id: userId });
   return member.status === "creator" || member.status === "administrator";
 }
+const RANKS = {
+  member: { level: 0, label: "عضو" },
+  ansar: { level: 20, label: "مناصر" },
+  munadil: { level: 40, label: "مناضل" },
+  mujahid: { level: 60, label: "مجاهد" },
+  thaer: { level: 80, label: "ثائر" },
+  rafiq: { level: 100, label: "رفيق" },
+  owner: { level: 110, label: "مؤسس المجموعة" }
+};
+async function getRank(env, chatId, userId) {
+  const member = await telegram(env, "getChatMember", { chat_id: chatId, user_id: userId }).catch(() => null);
+  if (member?.status === "creator") return "owner";
+  if (member?.status === "administrator") return "owner";
+  const row = await env.DB.prepare("SELECT role FROM group_roles WHERE chat_id=? AND user_id=?").bind(chatId,userId).first();
+  return RANKS[row?.role] ? row.role : "member";
+}
+async function rankLevel(env, chatId, userId) {
+  const rank = await getRank(env,chatId,userId);
+  return RANKS[rank].level;
+}
+function parseModerationDuration(value) {
+  const match=String(value||"").match(/^(\\d{1,5})(s|m|h|d)?$/i);
+  if(!match) return 3600;
+  const factor=({s:1,m:60,h:3600,d:86400})[(match[2]||"m").toLowerCase()];
+  return Math.min(2592000,Math.max(30,Number(match[1])*factor));
+}
 async function ensureMember(db, userId) {
   await db.prepare("INSERT OR IGNORE INTO members (user_id) VALUES (?)").bind(userId).run();
 }
@@ -310,8 +336,65 @@ async function handleCommands(env, message, member) {
     "📅 حضوري": "/حضور", "📜 المساعدة": "/مساعدة", "🆔 معرّفاتي": "/ايدي",
     "📩 همسة": "/همسة", "📋 القوانين": "/القوانين", "🚨 بلاغ": "/بلاغ"
   };
-  const command = buttonCommands[text] || (text.split(/\\s+/)[0] || "").split("@")[0].toLowerCase();
+  const command = buttonCommands[text] || (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
   const chatId = message.chat.id;
+  const rankCommands = {
+    "/اضف_رفيق":"rafiq", "/اضف_ثائر":"thaer", "/اضف_مجاهد":"mujahid",
+    "/اضف_مناضل":"munadil", "/اضف_مناصر":"ansar", "/ازالة_رتبة":"member"
+  };
+  if (Object.prototype.hasOwnProperty.call(rankCommands,command)) {
+    const target=message.reply_to_message?.from;
+    if(!target || target.is_bot || target.id===message.from.id) {
+      await sendText(env,chatId,"استخدم الأمر بالرد على رسالة العضو المطلوب."); return true;
+    }
+    const actorRank=await rankLevel(env,chatId,message.from.id);
+    const targetRank=await rankLevel(env,chatId,target.id);
+    const next=rankCommands[command], nextLevel=RANKS[next].level;
+    if(actorRank<80 || actorRank<=targetRank || actorRank<=nextLevel || (next==="rafiq" && actorRank!==110)) {
+      await sendText(env,chatId,"لا تملك الصلاحية الكافية لمنح هذه الرتبة أو تعديل رتبة أعلى منك."); return true;
+    }
+    if(next==="member") {
+      await env.DB.prepare("DELETE FROM group_roles WHERE chat_id=? AND user_id=?").bind(chatId,target.id).run();
+    } else {
+      await env.DB.prepare("INSERT INTO group_roles(chat_id,user_id,role,granted_by) VALUES(?,?,?,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET role=excluded.role,granted_by=excluded.granted_by,updated_at=CURRENT_TIMESTAMP").bind(chatId,target.id,next,message.from.id).run();
+    }
+    await sendText(env,chatId,"تم تحديث رتبة <b>"+escapeHtml(target.first_name||"العضو")+"</b> إلى <b>"+RANKS[next].label+"</b>.");
+    return true;
+  }
+  const moderation={"/حظر":"ban","/فك_الحظر":"unban","/كتم":"mute","/تقييد":"restrict","/الغاء_كتم":"unmute"};
+  if(moderation[command]) {
+    const target=message.reply_to_message?.from;
+    if(!target || target.is_bot || target.id===message.from.id) {
+      await sendText(env,chatId,"استخدم الأمر بالرد على رسالة العضو المطلوب."); return true;
+    }
+    const actor=await rankLevel(env,chatId,message.from.id);
+    const targetLevel=await rankLevel(env,chatId,target.id);
+    const action=moderation[command];
+    const required=action==="ban"||action==="unban"?100:60;
+    if(actor<required || actor<=targetLevel) {
+      await sendText(env,chatId,"رتبتك لا تسمح بهذا الإجراء على هذا العضو."); return true;
+    }
+    const duration=parseModerationDuration(text.split(/\\s+/)[1]);
+    const until=Math.floor(Date.now()/1000)+duration;
+    try {
+      if(action==="ban") await telegram(env,"banChatMember",{chat_id:chatId,user_id:target.id});
+      else if(action==="unban") await telegram(env,"unbanChatMember",{chat_id:chatId,user_id:target.id,only_if_banned:true});
+      else {
+        const permissions=action==="mute"
+          ? {can_send_messages:false,can_send_audios:false,can_send_documents:false,can_send_photos:false,can_send_videos:false,can_send_video_notes:false,can_send_voice_notes:false,can_send_polls:false,can_send_other_messages:false,can_add_web_page_previews:false}
+          : action==="restrict"
+            ? {can_send_messages:true,can_send_audios:false,can_send_documents:false,can_send_photos:false,can_send_videos:false,can_send_video_notes:false,can_send_voice_notes:false,can_send_polls:false,can_send_other_messages:false,can_add_web_page_previews:false}
+            : {can_send_messages:true,can_send_audios:true,can_send_documents:true,can_send_photos:true,can_send_videos:true,can_send_video_notes:true,can_send_voice_notes:true,can_send_polls:true,can_send_other_messages:true,can_add_web_page_previews:true};
+        await telegram(env,"restrictChatMember",{chat_id:chatId,user_id:target.id,permissions,use_independent_chat_permissions:true,...(action==="unmute"?{}:{until_date:until})});
+      }
+      const labels={ban:"حظر",unban:"فك الحظر",mute:"كتم",restrict:"تقييد",unmute:"إلغاء الكتم"};
+      await sendText(env,chatId,"تم تنفيذ <b>"+labels[action]+"</b> على العضو.");
+    } catch(error) {
+      console.error("Ronin moderation action failed",error);
+      await sendText(env,chatId,"تعذر تنفيذ الأمر. تأكد أن Ronin مشرف ويملك صلاحية حظر وتقييد الأعضاء.");
+    }
+    return true;
+  }
   if (["/ping", "!ping"].includes(command)) { await sendText(env, chatId, "Ronin is online."); return true; }
   if (["/rules", "!rules", "/правила", "/القوانين"].includes(command)) { await sendText(env, chatId, env.RULES_TEXT || "Please follow the group rules and respect other members."); return true; }
   if (["/me", "!me", "/info", "/lvl"].includes(command)) {
@@ -344,7 +427,7 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/help", "!help", "/مساعدة", "/مساعده"].includes(command)) {
-    const help = "⚔️ <b>دليل رونين</b>\\n\\n<b>👤 الملف والتفاعل</b>\\n/ملفي — ملفك ومستواك\\n/المتصدرين — أفضل الأعضاء\\n/حضور — حضور يومي +5 نقاط\\n/ايدي — معرّفات المجموعة والعضو\\n\\n<b>🎮 الألعاب</b>\\n/العاب — قائمة الألعاب\\n/سؤال — أسئلة عامة\\n/سيارات — تحدي السيارات\\n/حجر — حجر ورقة مقص\\n/صراحة — سؤال صراحة\\n/هذا_ام_ذاك — اختر بين خيارين\\n/عملة — رمية عملة\\n\\n<b>🔒 الخصوصية</b>\\n/همسة @username نص — همسة خاصة\\n\\n<b>🛡️ الإدارة</b>\\n/بلاغ — بلاغ بالرد على رسالة\\n/القوانين — قوانين المجموعة";
+    const help = "<b>دليل رونين</b>\n\n<b>الملف والتفاعل</b>\n/ملفي — ملفك ومستواك\n/المتصدرين — أفضل الأعضاء\n/حضور — حضور يومي\n/ايدي — معرّفات المجموعة والعضو\n\n<b>الألعاب</b>\n/العاب — قائمة الألعاب\n/سؤال — أسئلة عامة\n/سيارات — معلومات السيارات\n/حجر — حجر ورقة مقص\n/صراحة — سؤال صراحة\n/هذا_ام_ذاك — اختر بين خيارين\n/عملة — رمية عملة\n\n<b>الخصوصية</b>\n/همسة @username نص — همسة خاصة\n\n<b>الرتب</b>\n/اضف_رفيق، /اضف_ثائر، /اضف_مجاهد، /اضف_مناضل، /اضف_مناصر، /ازالة_رتبة\n\n<b>الإدارة</b>\nبالرد على عضو: /حظر، /فك_الحظر، /كتم، /تقييد، /الغاء_كتم\nأضف مدة مثل 10m أو 2h للكتم والتقييد.\n/بلاغ — إرسال بلاغ\n/القوانين — قوانين المجموعة";
     try {
       const me=await telegram(env,"getMe",{});
       const photos=await telegram(env,"getUserProfilePhotos",{user_id:me.id,limit:1});
