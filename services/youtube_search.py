@@ -15,6 +15,16 @@ MAX_AUDIO_SECONDS = 15 * 60
 _DOWNLOADS = asyncio.Semaphore(2)
 
 
+def format_duration(seconds: int | float | None) -> str:
+    """Format a duration for Telegram messages."""
+    if not isinstance(seconds, (int, float)) or seconds < 0:
+        return "المدة غير معروفة"
+    total = int(seconds)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
 class YouTubeSearchError(RuntimeError):
     """Raised when YouTube search cannot be completed."""
 
