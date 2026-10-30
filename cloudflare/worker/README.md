@@ -31,10 +31,11 @@ Implemented in this first native port:
 - Known VPN spam token detection and short drug-bait pattern detection.
 - Optional profanity term matching via the `PROFANITY_TERMS` variable.
 - Newcomer-burst detection with configurable log/delete action.
-- `/ping`, `/rules`, `/me`, `/report`, `/ban`, and `/unban`.
+- `/ping`, `/rules`, `/me`, `/profile`, `/id`, `/help`, `/report`, `/ban`, and `/unban`.
 - Arabic group entertainment: `/games`, `/quiz`, car trivia (`/cars`), `/rps`, `/truth` (صراحة), `/wyr` (this-or-that), and `/coin` (coin toss).
 - Race-safe game completion: only the first valid quiz answer can claim a round; RPS is restricted to the player who started it.
 - Daily check-ins (`/checkin`) and a per-group reputation leaderboard (`/top`).
+- Member profile cards (`/profile`) with deterministic XP levels, group rank, message totals, and milestone badges; `/id` shows the current group and member IDs, and `/help` lists commands.
 - Private one-to-one whispers (`/whisper @username text`) with an explicit open button and an opened status.
 - Private `/start` registration so users can receive whispers; recipients must start the bot first.
 - Moderator report buttons, audit log output, and optional repeat-spam autoban.
