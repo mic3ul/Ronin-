@@ -1,13 +1,21 @@
-"""YouTube search commands."""
+"""YouTube search and group audio commands."""
 
 import html
 import logging
+import shutil
+from pathlib import Path
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CommandObject, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types.input_file import FSInputFile
 
-from services.youtube_search import YouTubeSearchError, search_youtube
+from services.youtube_search import (
+    YouTubeAudioError,
+    YouTubeSearchError,
+    download_youtube_audio,
+    search_youtube,
+)
 
 router = Router(name="youtube")
 logger = logging.getLogger(__name__)
@@ -23,9 +31,9 @@ def _duration(seconds: int | float | None) -> str:
 
 
 @router.message(Command("yt", "youtube", "يوت", "يوتيوب", "بحث", prefix="/!"))
-async def youtube_search_command(message: Message) -> None:
+async def youtube_search_command(message: Message, command: CommandObject) -> None:
     """Find YouTube videos from a short text query."""
-    query = (message.text or "").partition(" ")[2].strip()
+    query = (command.args or "").strip()
     if not query:
         await message.reply(
             "🎧 <b>بحث يوتيوب</b>\n"
@@ -70,3 +78,62 @@ async def youtube_search_command(message: Message) -> None:
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         disable_web_page_preview=True,
     )
+
+
+@router.message(Command("play", "music", "شغل", "اغنية", "أغنية", prefix="/!"))
+async def youtube_play_command(message: Message, command: CommandObject) -> None:
+    """Find the best YouTube match and send a short audio file to the chat."""
+    query = (command.args or "").strip()
+    if not query:
+        await message.reply(
+            "🎵 اكتب اسم الأغنية بعد الأمر.\n"
+            "<code>/play اسم الأغنية</code>\n"
+            "يُسمح بمقاطع تصل إلى 15 دقيقة و45 MB."
+        )
+        return
+    if len(query) > 160:
+        await message.reply("الطلب طويل جداً. اختصره إلى 160 حرفاً.")
+        return
+
+    status = await message.reply("🔎 أبحث عن الأغنية…")
+    try:
+        results = await search_youtube(query, limit=1)
+    except YouTubeSearchError:
+        logger.exception("YouTube search failed for playback")
+        await status.edit_text("تعذّر البحث حالياً. حاول مرة أخرى بعد قليل.")
+        return
+
+    if not results:
+        await status.edit_text("لم أجد أغنية مطابقة. جرّب اسماً آخر.")
+        return
+
+    selected = results[0]
+    duration = selected.get("duration")
+    if duration and duration > 15 * 60:
+        await status.edit_text("الأغنية أطول من الحد المسموح (15 دقيقة).")
+        return
+
+    audio_path = None
+    try:
+        await status.edit_text("⬇️ أجهّز الملف الصوتي…")
+        audio_path, title = await download_youtube_audio(selected["url"])
+        await message.answer_audio(
+            audio=FSInputFile(audio_path, filename=f"{title}.mp3"),
+            title=title,
+            performer=selected.get("channel") or None,
+            caption=f"🎵 <b>{html.escape(title)}</b>\n"
+                    "<i>تم الإرسال بناءً على طلب المجموعة.</i>",
+        )
+        await status.delete()
+    except YouTubeAudioError:
+        logger.exception("YouTube audio preparation failed")
+        await status.edit_text(
+            "تعذّر تجهيز الصوت. قد يكون المقطع محمياً أو أطول/أكبر من الحد، "
+            "أو أن FFmpeg غير مثبت."
+        )
+    except Exception:
+        logger.exception("Failed to send YouTube audio to chat")
+        await status.edit_text("فشل إرسال الملف الصوتي. تحقق من اتصال البوت وحاول مجدداً.")
+    finally:
+        if audio_path:
+            shutil.rmtree(str(Path(audio_path).parent), ignore_errors=True)
