@@ -331,7 +331,7 @@ Search for songs, music, and videos directly from a group or private chat:
 - `/يوت <اسم الأغنية>`
 - `/يوتيوب <اسم الفيديو>`
 
-The bot returns up to five matching YouTube results with title, channel, duration, and direct links. Use `/play <song name>` (or `/شغل <اسم الأغنية>`) to prepare and send the first matching audio result to the group. Audio preparation is limited to 15 minutes and 45 MB and requires FFmpeg. Only request or share audio that you own or are authorized to use; YouTube availability does not grant download or redistribution rights.
+The bot returns up to five matching YouTube results with title, channel, duration, and direct links. Use `/play --authorized <song name>` (or `/شغل --authorized <اسم الأغنية>`) only when you own the audio or have explicit permission to download and redistribute it. The required `--authorized` flag is an explicit user attestation, not an independent rights check. Audio preparation is limited to 15 minutes and 45 MB and requires FFmpeg. YouTube availability does not grant download or redistribution rights.
 
 ## External Libraries
 

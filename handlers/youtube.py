@@ -75,13 +75,19 @@ async def youtube_search_command(message: Message, command: CommandObject) -> No
 @router.message(Command("play", "music", "شغل", "اغنية", "أغنية", prefix="/!"))
 async def youtube_play_command(message: Message, command: CommandObject) -> None:
     """Find the best YouTube match and send a short audio file to the chat."""
-    query = (command.args or "").strip()
-    if not query:
+    raw_args = (command.args or "").strip()
+    prefix = "--authorized "
+    if not raw_args.startswith(prefix):
         await message.reply(
-            "🎵 اكتب اسم الأغنية بعد الأمر.\n"
-            "<code>/play اسم الأغنية</code>\n"
-            "يُسمح بمقاطع تصل إلى 15 دقيقة و45 MB."
+            "لا أستطيع تنزيل أو إرسال محتوى لا تملك حق استخدامه.\\n"
+            "إذا كنت تملك المقطع أو لديك إذن صريح بإعادة توزيعه، "
+            "أكّد ذلك باستخدام:\\n"
+            "<code>/play --authorized اسم الأغنية</code>"
         )
+        return
+    query = raw_args[len(prefix):].strip()
+    if not query:
+        await message.reply("اكتب اسم الأغنية بعد --authorized.")
         return
     if len(query) > 160:
         await message.reply("الطلب طويل جداً. اختصره إلى 160 حرفاً.")

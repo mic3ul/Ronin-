@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import shutil
 import tempfile
 from pathlib import Path
@@ -16,11 +17,20 @@ MAX_AUDIO_SECONDS = 15 * 60
 _DOWNLOADS = asyncio.Semaphore(2)
 
 
+def normalize_duration(seconds: Any) -> int | None:
+    """Return a safe, finite, non-negative duration in whole seconds."""
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return int(seconds)
+
+
 def format_duration(seconds: int | float | None) -> str:
     """Format a duration for Telegram messages."""
-    if not isinstance(seconds, (int, float)) or seconds < 0:
+    total = normalize_duration(seconds)
+    if total is None:
         return "المدة غير معروفة"
-    total = int(seconds)
     hours, remainder = divmod(total, 3600)
     minutes, secs = divmod(remainder, 60)
     return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
@@ -76,7 +86,7 @@ def _search_sync(query: str, limit: int) -> list[dict[str, Any]]:
         results.append({
             "title": str(item.get("title") or "Untitled video")[:180],
             "url": str(url),
-            "duration": item.get("duration"),
+            "duration": normalize_duration(item.get("duration")),
             "channel": str(item.get("channel") or item.get("uploader") or "")[:80],
         })
     return results

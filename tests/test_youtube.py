@@ -23,6 +23,9 @@ format_duration = youtube_search.format_duration
         (None, "المدة غير معروفة"),
         (-1, "المدة غير معروفة"),
         ("unknown", "المدة غير معروفة"),
+        (float("nan"), "المدة غير معروفة"),
+        (float("inf"), "المدة غير معروفة"),
+        (True, "المدة غير معروفة"),
     ],
 )
 def test_duration_formatting(seconds, expected):
@@ -119,3 +122,43 @@ def test_search_youtube_rejects_non_youtube_url(monkeypatch):
 
     monkeypatch.setattr(youtube_search, "YoutubeDL", FakeYoutubeDL)
     assert youtube_search._search_sync("test", 1) == []
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (123.9, 123),
+        (0, 0),
+        (None, None),
+        ("123", None),
+        (True, None),
+        (-1, None),
+        (float("nan"), None),
+        (float("inf"), None),
+    ],
+)
+def test_duration_normalization(value, expected):
+    assert youtube_search.normalize_duration(value) == expected
+
+
+def test_search_youtube_normalizes_invalid_duration_to_unknown(monkeypatch):
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, query, download=False):
+            return {
+                "entries": [
+                    {"id": "abc123", "title": "Test", "duration": "unknown"},
+                ]
+            }
+
+    monkeypatch.setattr(youtube_search, "YoutubeDL", FakeYoutubeDL)
+    results = youtube_search._search_sync("test", 1)
+    assert results[0]["duration"] is None
