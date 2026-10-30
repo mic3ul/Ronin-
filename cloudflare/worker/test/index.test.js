@@ -45,3 +45,19 @@ test("profile levels advance at deterministic reputation thresholds", () => {
   assert.equal(getProfileLevel(200).level, 3);
   assert.equal(getProfileLevel(-20).level, 1);
 });
+
+test("webhook setup endpoint rejects unauthenticated requests", async () => {
+  const request = new Request("https://ronin.test/telegram/setup", { method: "POST" });
+  const response = await worker.fetch(request, { TELEGRAM_WEBHOOK_SECRET: "expected-secret", TELEGRAM_BOT_TOKEN: "test" });
+  assert.equal(response.status, 401);
+});
+
+test("webhook setup endpoint requires a configured bot token", async () => {
+  const request = new Request("https://ronin.test/telegram/setup", {
+    method: "POST",
+    headers: { "X-Ronin-Setup-Key": "expected-secret" }
+  });
+  const response = await worker.fetch(request, { TELEGRAM_WEBHOOK_SECRET: "expected-secret" });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "bot_token_not_configured" });
+});
