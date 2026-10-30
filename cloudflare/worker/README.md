@@ -119,16 +119,21 @@ Check `https://<worker-subdomain>.workers.dev/health`. It should return
 Stop the old polling process first. Telegram cannot deliver updates through
 polling and webhook simultaneously.
 
-Call Telegram's `setWebhook` method with:
+The Worker includes an authenticated setup endpoint. After adding both secrets
+in Cloudflare, run this in Termux (it prompts for the setup secret without
+putting it directly in the shell command history):
 
-- `url`: `https://<worker-subdomain>.workers.dev/telegram/webhook`
-- `secret_token`: exactly the value configured as `TELEGRAM_WEBHOOK_SECRET`
-- `allowed_updates`: `["message","edited_message","callback_query"]`
-- `drop_pending_updates`: `false`
+```bash
+read -rsp "Webhook setup secret: " RONIN_SETUP_KEY; echo
+curl -sS -X POST "https://ronin-telegram-edge.mic3ul-weirdwolf.workers.dev/telegram/setup" \
+  -H "X-Ronin-Setup-Key: ${RONIN_SETUP_KEY}"
+unset RONIN_SETUP_KEY
+```
 
-Verify with Telegram's `getWebhookInfo` method. Add the bot as an administrator
-in each configured group and disable BotFather privacy mode if it must inspect
-ordinary group messages.
+The endpoint registers `/telegram/webhook` with Telegram using the configured
+secret and returns `getWebhookInfo`. It rejects requests without the matching
+setup secret. Add the bot as an administrator in each configured group and
+disable BotFather privacy mode if it must inspect ordinary group messages.
 
 ## Limits and cost
 
