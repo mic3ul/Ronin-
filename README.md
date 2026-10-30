@@ -361,6 +361,8 @@ Telegram webhook updates directly through the Telegram Bot API and persists
 member reputation, moderation counters, reports, and update deduplication in
 D1. It does not need a Python origin, Docker container, or Workers Paid plan.
 
+The native Worker now also includes Arabic group games (quiz, car trivia, and rock-paper-scissors), daily check-ins, a reputation leaderboard, and private whispers for users who have started the bot. Whisper-open status is recorded through an explicit button, not inferred from Telegram read receipts.
+
 The native Worker currently covers core moderation (low-reputation links,
 media and single-emoji restrictions, known spam patterns, short drug-bait
 detection), reputation tracking, newcomer-burst detection, reports, and
