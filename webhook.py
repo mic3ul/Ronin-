@@ -1,8 +1,8 @@
 """Run Ronin behind a Cloudflare Worker Telegram webhook gateway.
 
 The Worker is the public Telegram endpoint. This Python process remains the
-feature engine so the existing aiogram handlers, ML models, database layer,
-scheduler, and media tools keep their current behavior.
+feature engine so the existing aiogram handlers, middleware, database layer,
+scheduler, ML models, and media tools keep their current behavior.
 """
 import logging
 import os
@@ -18,6 +18,7 @@ from bot import on_shutdown, on_startup
 from config import config
 from handlers import register_all_handlers
 from middlewares import register_all_middlewares
+from services.healthcheck import get_health_server
 
 logger = logging.getLogger(__name__)
 WEBHOOK_PATH = "/telegram/webhook"
@@ -60,7 +61,18 @@ def create_webhook_app() -> tuple[web.Application, Bot]:
     ).register(app, path=WEBHOOK_PATH)
     setup_application(app, dispatcher, bot=bot)
 
+    # The webhook server itself serves health endpoints. Starting the separate
+    # polling-mode health server here would bind the same port and crash startup.
+    if config.healthcheck.enabled:
+        health = get_health_server(
+            host=config.healthcheck.host,
+            port=config.healthcheck.port,
+        )
+        app.router.add_get("/health", health._health_handler)
+        app.router.add_get("/ready", health._ready_handler)
+
     async def set_telegram_webhook(_: web.Application) -> None:
+        # This runs after aiogram's startup hook has initialized the DB/services.
         await bot.set_webhook(
             url=f"{webhook_url}{WEBHOOK_PATH}",
             secret_token=secret,
