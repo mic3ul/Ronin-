@@ -61,19 +61,21 @@ const RONIN_KEYBOARD = {
   keyboard: [
     [{ text: "🎮 الألعاب" }, { text: "👤 ملفي" }, { text: "🏆 المتصدرون" }],
     [{ text: "🧠 سؤال" }, { text: "🚘 سيارات" }, { text: "🎭 صراحة" }],
-    [{ text: "📅 حضوري" }, { text: "📜 المساعدة" }, { text: "🆔 ID" }]
+    [{ text: "✊ حجر ورقة مقص" }, { text: "⚖️ هذا أم ذاك" }, { text: "🪙 رمية عملة" }],
+    [{ text: "📅 حضوري" }, { text: "📜 المساعدة" }, { text: "🆔 معرّفاتي" }],
+    [{ text: "📩 همسة" }, { text: "📋 القوانين" }, { text: "🚨 بلاغ" }]
   ],
   resize_keyboard: true,
   is_persistent: true,
-  input_field_placeholder: "اختر أمراً من أزرار رونين"
+  input_field_placeholder: "اختر أمراً من قائمة رونين"
 };
 async function sendText(env, chatId, text, extra = {}) {
   return telegram(env, "sendMessage", Object.assign({ chat_id: chatId, text, parse_mode: "HTML" }, extra));
 }
 async function sendRoninWelcome(env, chatId, group = false) {
   const caption = group
-    ? "⚔️ <b>رونين وصل للمجموعة</b>\\nأنا Ronin، رفيقكم للألعاب والتفاعل وإدارة المجموعة. استخدموا الأزرار بالأسفل أو /help لعرض الأوامر."
-    : "⚔️ <b>أهلاً بك في Ronin</b>\\nأنا رفيقك في المجموعات. لإرسال همسة استخدم /whisper @username النص.";
+    ? "⚔️ <b>رونين وصل للمجموعة</b>\nأنا Ronin، رفيقكم للألعاب والتفاعل وإدارة المجموعة. استخدموا الأزرار بالأسفل أو /help لعرض الأوامر."
+    : "⚔️ <b>أهلاً بك في Ronin</b>\nأنا رفيقك في المجموعات. لإرسال همسة استخدم /whisper @username النص.";
   const extra = group ? { reply_markup: RONIN_KEYBOARD } : {};
   try {
     const me = await telegram(env, "getMe", {});
@@ -174,7 +176,7 @@ async function registerPrivateUser(env, user) {
 async function handleWhisper(env, message, text) {
   const match = text.match(/^(?:\/whisper(?:@\w+)?|\/همسة)\s+@([A-Za-z0-9_]{5,32})\s+([\s\S]{1,700})$/i);
   if (!match) {
-    await sendText(env, message.chat.id, "الاستخدام: /whisper @username نص الهمسة\\nلازم المستلم يكون فتح البوت وأرسل /start أولاً.");
+    await sendText(env, message.chat.id, "الاستخدام: /whisper @username نص الهمسة\nلازم المستلم يكون فتح البوت وأرسل /start أولاً.");
     return true;
   }
   try {
@@ -226,7 +228,7 @@ async function handleNewCallback(env, callback) {
       return true;
     }
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة." });
-    await sendText(env, callback.from.id, "💌 <b>همستك:</b>\\n" + escapeHtml(whisper.body));
+    await sendText(env, callback.from.id, "💌 <b>همستك:</b>\n" + escapeHtml(whisper.body));
     await sendText(env, whisper.sender_user_id, "📭 تم فتح همستك من المستلم.");
     return true;
   }
@@ -258,7 +260,7 @@ async function handleNewCallback(env, callback) {
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: correct ? "إجابة صحيحة! +3 نقاط" : "إجابة خاطئة، حاول مرة أخرى في الجولة القادمة." });
     await telegram(env, "editMessageText", {
       chat_id: callback.message.chat.id, message_id: callback.message.message_id,
-      text: "🧠 <b>" + escapeHtml(payload.q) + "</b>\\nالإجابة الصحيحة: <b>" + escapeHtml(payload.a[payload.correct]) + "</b>\\nالفائز: " + (correct ? escapeHtml(callback.from.first_name || "لاعب") : "لا أحد"),
+      text: "🧠 <b>" + escapeHtml(payload.q) + "</b>\nالإجابة الصحيحة: <b>" + escapeHtml(payload.a[payload.correct]) + "</b>\nالفائز: " + (correct ? escapeHtml(callback.from.first_name || "لاعب") : "لا أحد"),
       parse_mode: "HTML"
     });
     return true;
@@ -291,7 +293,7 @@ async function handleNewCallback(env, callback) {
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: outcome });
     await telegram(env, "editMessageText", {
       chat_id: callback.message.chat.id, message_id: callback.message.message_id,
-      text: "✊ <b>حجر ورقة مقص</b>\\nاختيارك: " + RPS[choice] + "\\nاختيار البوت: " + RPS[botChoice] + "\\n<b>" + outcome + "</b>",
+      text: "✊ <b>حجر ورقة مقص</b>\nاختيارك: " + RPS[choice] + "\nاختيار البوت: " + RPS[botChoice] + "\n<b>" + outcome + "</b>",
       parse_mode: "HTML"
     });
     return true;
@@ -302,14 +304,16 @@ async function handleNewCallback(env, callback) {
 async function handleCommands(env, message, member) {
   const text = getText(message).trim();
   const buttonCommands = {
-    "🎮 الألعاب": "/games", "👤 ملفي": "/profile", "🏆 المتصدرون": "/top",
-    "🧠 سؤال": "/quiz", "🚘 سيارات": "/cars", "🎭 صراحة": "/truth",
-    "📅 حضوري": "/checkin", "📜 المساعدة": "/help", "🆔 ID": "/id"
+    "🎮 الألعاب": "/العاب", "👤 ملفي": "/ملفي", "🏆 المتصدرون": "/المتصدرين",
+    "🧠 سؤال": "/سؤال", "🚘 سيارات": "/سيارات", "🎭 صراحة": "/صراحة",
+    "✊ حجر ورقة مقص": "/حجر", "⚖️ هذا أم ذاك": "/هذا_ام_ذاك", "🪙 رمية عملة": "/عملة",
+    "📅 حضوري": "/حضور", "📜 المساعدة": "/مساعدة", "🆔 معرّفاتي": "/ايدي",
+    "📩 همسة": "/همسة", "📋 القوانين": "/القوانين", "🚨 بلاغ": "/بلاغ"
   };
-  const command = buttonCommands[text] || (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
+  const command = buttonCommands[text] || (text.split(/\\s+/)[0] || "").split("@")[0].toLowerCase();
   const chatId = message.chat.id;
   if (["/ping", "!ping"].includes(command)) { await sendText(env, chatId, "Ronin is online."); return true; }
-  if (["/rules", "!rules", "/правила"].includes(command)) { await sendText(env, chatId, env.RULES_TEXT || "Please follow the group rules and respect other members."); return true; }
+  if (["/rules", "!rules", "/правила", "/القوانين"].includes(command)) { await sendText(env, chatId, env.RULES_TEXT || "Please follow the group rules and respect other members."); return true; }
   if (["/me", "!me", "/info", "/lvl"].includes(command)) {
     await sendText(env, chatId, "<b>" + escapeHtml(message.from.first_name || "Member") + "</b>\nMessages: " + member.message_count + "\nReputation: " + member.reputation_points + "\nSpam violations: " + member.spam_violations + "\nProfanity violations: " + member.profanity_violations);
     return true;
@@ -326,21 +330,28 @@ async function handleCommands(env, message, member) {
     if (profile.reputation_points >= 500) badges.push("🏅 نخبة رونين");
     if (!badges.length) badges.push("🌱 عضو جديد");
     await sendText(env, chatId,
-      "👤 <b>ملف العضو</b>\\n<b>" + escapeHtml(profile.first_name || "Member") + "</b>" +
+      "👤 <b>ملف العضو</b>\n<b>" + escapeHtml(profile.first_name || "Member") + "</b>" +
       (profile.username ? " · @" + escapeHtml(profile.username) : "") +
-      "\\n🏆 المستوى: <b>" + level.level + "</b> · الترتيب: <b>#" + (rankRow?.rank || 1) + "</b>" +
-      "\\n⭐ السمعة: <b>" + profile.reputation_points + "</b>" +
-      "\\n📈 التقدم: " + level.currentXp + " / " + level.nextLevelXp + " XP" +
-      "\\n💬 الرسائل: " + profile.message_count +
-      "\\n🎖️ الشارات: " + badges.join("، "));
+      "\n🏆 المستوى: <b>" + level.level + "</b> · الترتيب: <b>#" + (rankRow?.rank || 1) + "</b>" +
+      "\n⭐ السمعة: <b>" + profile.reputation_points + "</b>" +
+      "\n📈 التقدم: " + level.currentXp + " / " + level.nextLevelXp + " XP" +
+      "\n💬 الرسائل: " + profile.message_count +
+      "\n🎖️ الشارات: " + badges.join("، "));
     return true;
   }
-  if (["/id", "!id", "/ايدي"].includes(command)) {
-    await sendText(env, chatId, "🆔 <b>معرّف المجموعة:</b> <code>" + chatId + "</code>\\n<b>معرّفك:</b> <code>" + message.from.id + "</code>");
+  if (["/id", "!id", "/ايدي", "/معرفاتي"].includes(command)) {
+    await sendText(env, chatId, "🆔 <b>معرّف المجموعة:</b> <code>" + chatId + "</code>\n<b>معرّفك:</b> <code>" + message.from.id + "</code>");
     return true;
   }
-  if (["/help", "!help", "/مساعدة"].includes(command)) {
-    await sendText(env, chatId, "🛡️ <b>مساعدة Ronin</b>\\n<b>الملف والتفاعل</b>\\n/profile — ملفك ومستواك وشاراتك\\n/top — المتصدرون\\n/checkin — حضور يومي\\n/id — معرّفات المجموعة والعضو\\n<b>الألعاب</b>\\n/games — قائمة الألعاب\\n/quiz — أسئلة عامة\\n/cars — معلومات السيارات\\n/rps — حجر ورقة مقص\\n/truth — صراحة\\n/wyr — هذا أم ذاك\\n/coin — رمية عملة\\n<b>الخصوصية</b>\\n/whisper @username نص — همسة خاصة\\n<b>الإدارة</b>\\n/report — بلاغ بالرد على رسالة\\n/rules — قوانين المجموعة");
+  if (["/help", "!help", "/مساعدة", "/مساعده"].includes(command)) {
+    const help = "⚔️ <b>دليل رونين</b>\\n\\n<b>👤 الملف والتفاعل</b>\\n/ملفي — ملفك ومستواك\\n/المتصدرين — أفضل الأعضاء\\n/حضور — حضور يومي +5 نقاط\\n/ايدي — معرّفات المجموعة والعضو\\n\\n<b>🎮 الألعاب</b>\\n/العاب — قائمة الألعاب\\n/سؤال — أسئلة عامة\\n/سيارات — تحدي السيارات\\n/حجر — حجر ورقة مقص\\n/صراحة — سؤال صراحة\\n/هذا_ام_ذاك — اختر بين خيارين\\n/عملة — رمية عملة\\n\\n<b>🔒 الخصوصية</b>\\n/همسة @username نص — همسة خاصة\\n\\n<b>🛡️ الإدارة</b>\\n/بلاغ — بلاغ بالرد على رسالة\\n/القوانين — قوانين المجموعة";
+    try {
+      const me=await telegram(env,"getMe",{});
+      const photos=await telegram(env,"getUserProfilePhotos",{user_id:me.id,limit:1});
+      const photo=photos.photos?.[0]?.at(-1);
+      if(photo?.file_id) await telegram(env,"sendPhoto",{chat_id:chatId,photo:photo.file_id,caption:help,parse_mode:"HTML",reply_markup:RONIN_KEYBOARD});
+      else await sendText(env,chatId,help,{reply_markup:RONIN_KEYBOARD});
+    } catch(e){console.warn("help image unavailable",e);await sendText(env,chatId,help,{reply_markup:RONIN_KEYBOARD});}
     return true;
   }
   if (command === "/report" || command === "!report") {
@@ -362,10 +373,10 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/games", "!games", "/العاب", "/ألعاب"].includes(command)) {
-    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\\n/profile — ملفك ومستواك وشاراتك\\n/id — معرّفات المجموعة والعضو\\n/help — كل الأوامر\\n/quiz — سؤال سريع بأربع إجابات\\n/cars — تحدي معلومات السيارات\\n/rps — حجر ورقة مقص ضد البوت (لصاحب التحدي)\\n/truth — صراحة عشوائية\\n/wyr — هذا أم ذاك؟\\n/coin — رمية عملة\\n/checkin — حضور يومي +5 نقاط\\n/top — أفضل 10 أعضاء\\n/whisper @username نص — أرسل همسة خاصة");
+    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\n/profile — ملفك ومستواك وشاراتك\n/id — معرّفات المجموعة والعضو\n/help — كل الأوامر\n/quiz — سؤال سريع بأربع إجابات\n/cars — تحدي معلومات السيارات\n/rps — حجر ورقة مقص ضد البوت (لصاحب التحدي)\n/truth — صراحة عشوائية\n/wyr — هذا أم ذاك؟\n/coin — رمية عملة\n/checkin — حضور يومي +5 نقاط\n/top — أفضل 10 أعضاء\n/whisper @username نص — أرسل همسة خاصة");
     return true;
   }
-  if (["/quiz", "!quiz", "/cars", "/سيارات"].includes(command)) {
+  if (["/quiz", "!quiz", "/سؤال", "/cars", "/سيارات"].includes(command)) {
     const bank = command === "/cars" || command === "/سيارات" ? CAR_QUIZ_BANK : QUIZ_BANK;
     const question = bank[Math.floor(Math.random() * bank.length)];
     const id = await createGame(env, chatId, message.from.id, "quiz", question);
@@ -385,7 +396,7 @@ async function handleCommands(env, message, member) {
       "ما أكثر مجاملة بقيت في ذاكرتك؟",
       "لو استطعت الاعتذار لشخص واحد، فمن سيكون؟"
     ];
-    await sendText(env, chatId, "🎭 <b>سؤال صراحة</b>\\n" + escapeHtml(prompts[Math.floor(Math.random() * prompts.length)]));
+    await sendText(env, chatId, "🎭 <b>سؤال صراحة</b>\n" + escapeHtml(prompts[Math.floor(Math.random() * prompts.length)]));
     return true;
   }
   if (["/wyr", "!wyr", "/thisorthat", "/هذاامذاك"].includes(command)) {
@@ -400,17 +411,17 @@ async function handleCommands(env, message, member) {
       ["إجازة سنة كاملة", "راتب مضاعف مدى الحياة"]
     ];
     const pair = pairs[Math.floor(Math.random() * pairs.length)];
-    await sendText(env, chatId, "⚖️ <b>هذا أم ذاك؟</b>\\n1️⃣ " + escapeHtml(pair[0]) + "\\nأم\\n2️⃣ " + escapeHtml(pair[1]) + "\\nاكتب اختيارك في المجموعة.");
+    await sendText(env, chatId, "⚖️ <b>هذا أم ذاك؟</b>\n1️⃣ " + escapeHtml(pair[0]) + "\nأم\n2️⃣ " + escapeHtml(pair[1]) + "\nاكتب اختيارك في المجموعة.");
     return true;
   }
   if (["/coin", "!coin", "/عملة"].includes(command)) {
     const side = Math.random() < 0.5 ? "🪙 صورة" : "🪙 كتابة";
-    await sendText(env, chatId, "رونين رمى العملة...\\n<b>" + side + "</b>");
+    await sendText(env, chatId, "رونين رمى العملة...\n<b>" + side + "</b>");
     return true;
   }
   if (["/rps", "!rps", "/حجره", "/حجر"].includes(command)) {
     const id = await createGame(env, chatId, message.from.id, "rps", {});
-    await sendText(env, chatId, "✊ <b>حجر ورقة مقص</b>\\nاختر حركتك لمواجهة البوت:", {
+    await sendText(env, chatId, "✊ <b>حجر ورقة مقص</b>\nاختر حركتك لمواجهة البوت:", {
       reply_markup: { inline_keyboard: [[
         { text: "حجر 🪨", callback_data: "rps:" + id + ":0" },
         { text: "ورقة 📄", callback_data: "rps:" + id + ":1" },
@@ -436,7 +447,7 @@ async function handleCommands(env, message, member) {
   if (["/top", "!top", "/المتصدرين"].includes(command)) {
     const rows = await env.DB.prepare("SELECT user_id, first_name, username, reputation_points, message_count FROM group_members WHERE chat_id=? ORDER BY reputation_points DESC, message_count DESC LIMIT 10").bind(chatId).all();
     const lines = (rows.results || []).map((row, i) => (i + 1) + ". " + escapeHtml(row.first_name || (row.username ? "@" + row.username : "عضو")) + " — " + row.reputation_points + " نقطة");
-    await sendText(env, chatId, "🏆 <b>أفضل 10 أعضاء</b>\\n" + (lines.length ? lines.join("\\n") : "لا توجد نتائج بعد."));
+    await sendText(env, chatId, "🏆 <b>أفضل 10 أعضاء</b>\n" + (lines.length ? lines.join("\n") : "لا توجد نتائج بعد."));
     return true;
   }
   if (["/ban", "!ban", "/unban", "!unban"].includes(command)) {
