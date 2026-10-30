@@ -482,7 +482,7 @@ async function handleCommands(env, message, member) {
     await sendText(env, chatId, "🎭 <b>سؤال صراحة</b>\n" + escapeHtml(prompts[Math.floor(Math.random() * prompts.length)]));
     return true;
   }
-  if (["/wyr", "!wyr", "/thisorthat", "/هذاامذاك"].includes(command)) {
+  if (["/wyr", "!wyr", "/thisorthat", "/هذاامذاك", "/هذا_ام_ذاك"].includes(command)) {
     const pairs = [
       ["السفر عبر الزمن", "السفر إلى الفضاء"],
       ["قراءة الأفكار", "الاختفاء"],
@@ -564,7 +564,16 @@ async function handleCallback(env, callback) {
   await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: action === "report_ban" ? "User banned and message deleted." : "Message deleted." });
 }
 async function handleMessage(env, message, edited = false) {
-  if (!message || !message.from || message.from.is_bot || !isGroup(message.chat)) return;
+  if (!message || !isGroup(message.chat)) return;
+  if (!edited && message.new_chat_members?.length) {
+    const bot = await telegram(env,"getMe",{});
+    if (message.new_chat_members.some((member) => member.id === bot.id)) {
+      await env.DB.prepare("INSERT INTO allowed_groups(chat_id,title,active) VALUES(?,?,1) ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title,active=1,updated_at=CURRENT_TIMESTAMP").bind(message.chat.id,message.chat.title||"").run();
+      await sendRoninWelcome(env,message.chat.id,true);
+      return;
+    }
+  }
+  if (!message.from || message.from.is_bot) return;
   const registered = await env.DB.prepare("SELECT chat_id FROM allowed_groups WHERE chat_id=? AND active=1").bind(message.chat.id).first();
   if (!registered) return;
   const userId = message.from.id;
