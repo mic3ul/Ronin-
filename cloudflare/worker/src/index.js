@@ -142,7 +142,11 @@ async function handleCommands(env, message, member) {
 async function handleCallback(env, callback) {
   const parts = (callback.data || "").split("|");
   const action = parts[0];
-  if (action === "report_dismiss") { await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "Report dismissed." }); return; }
+  if (action === "report_dismiss") {
+    const authorized = await isChatAdmin(env, callback.message.chat.id, callback.from.id).catch(() => false);
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: authorized ? "Report dismissed." : "Administrator access required.", show_alert: !authorized });
+    return;
+  }
   if (!["report_del", "report_ban"].includes(action)) { await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "Unknown action." }); return; }
   const chatId = Number(parts[1]), messageId = Number(parts[2]), userId = Number(parts[3]);
   const authorized = await isChatAdmin(env, callback.message.chat.id, callback.from.id).catch(() => false);
@@ -202,11 +206,17 @@ export default {
     } catch { return json({ error: "invalid_json" }, 400); }
     if (!Number.isSafeInteger(update.update_id)) return json({ error: "invalid_update_id" }, 400);
     try {
-      const inserted = await env.DB.prepare("INSERT OR IGNORE INTO processed_updates (update_id) VALUES (?)").bind(update.update_id).run();
-      if (inserted.meta && inserted.meta.changes === 0) return json({ ok: true, duplicate: true });
+      const inserted = await env.DB.prepare("INSERT OR IGNORE INTO processed_updates (update_id, status) VALUES (?, 'processing')").bind(update.update_id).run();
+      if (inserted.meta && inserted.meta.changes === 0) {
+        const prior = await env.DB.prepare("SELECT status FROM processed_updates WHERE update_id = ?").bind(update.update_id).first();
+        if (prior && prior.status === "done") return json({ ok: true, duplicate: true });
+        return json({ error: "update_in_progress" }, 503);
+      }
       await processUpdate(update, env);
+      await env.DB.prepare("UPDATE processed_updates SET status = 'done', processed_at = CURRENT_TIMESTAMP WHERE update_id = ?").bind(update.update_id).run();
       return json({ ok: true });
     } catch (error) {
+      await env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(update.update_id).run().catch(() => null);
       console.error("Ronin update failed", error);
       return json({ error: "processing_failed" }, 500);
     }
