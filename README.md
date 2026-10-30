@@ -322,6 +322,17 @@ All behavior settings are available in `config.toml`, including spam thresholds,
 
 Commands registered with both prefixes can also be used with `/` instead of `!`.
 
+## YouTube search
+
+Search for songs, music, and videos directly from a group or private chat:
+
+- `/yt <search terms>`
+- `/youtube <search terms>`
+- `/يوت <اسم الأغنية>`
+- `/يوتيوب <اسم الفيديو>`
+
+The bot returns up to five matching YouTube results with title, channel, duration, and direct links. This feature searches public metadata only; it does not download or re-upload copyrighted media.
+
 ## External Libraries
 
 The bot uses two external libraries in the `libs/` folder:
