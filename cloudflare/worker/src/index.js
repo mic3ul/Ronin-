@@ -277,8 +277,36 @@ async function handleWhisper(env, message, text) {
   }
   return true;
 }
+
 async function handleNewCallback(env, callback) {
   const data = callback.data || "";
+  if (data.startsWith("menu:")) {
+    const key = data.slice(5);
+    if (key === "home") await sendCategoryHome(env, callback.message.chat.id);
+    else await sendCategoryCard(env, callback.message.chat.id, key);
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح القسم." });
+    return true;
+  }
+  if (data.startsWith("music:")) {
+    const trackId = data.slice(6);
+    if (!/^\d{1,15}$/.test(trackId)) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "اختيار غير صالح.", show_alert: true });
+      return true;
+    }
+    try { await sendMusicPreview(env, callback, trackId); }
+    catch (error) {
+      console.error("Music preview failed", error);
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تعذر إرسال المعاينة حالياً.", show_alert: true });
+    }
+    return true;
+  }
+  if (data.startsWith("cmd:")) {
+    const commandText = data.slice(4);
+    const member = await getMember(env.DB, callback.from.id);
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم." });
+    if (member) await handleCommands(env, { ...callback.message, from: callback.from, text: commandText, reply_to_message: null }, member);
+    return true;
+  }
   if (data.startsWith("whisper_open:")) {
     const id = Number(data.split(":")[1]);
     const whisper = await env.DB.prepare("SELECT * FROM whispers WHERE id=?").bind(id).first();
