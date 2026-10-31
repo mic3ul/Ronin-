@@ -110,10 +110,18 @@ async function sendMusicPreview(env, callback, trackId) {
   const response = await fetch("https://itunes.apple.com/lookup?id=" + encodeURIComponent(trackId) + "&country=US");
   if (!response.ok) throw new Error("Music lookup unavailable");
   const data = await response.json();
-  const track = (data.results || []).find(item => item.trackId === Number(trackId) && item.previewUrl);
-  if (!track) { await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "المعاينة غير متاحة لهذا المقطع.", show_alert: true }); return; }
-  await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "أرسل المعاينة الصوتية." });
-  await telegram(env, "sendAudio", { chat_id: callback.message.chat.id, audio: track.previewUrl, title: track.trackName, performer: track.artistName, caption: "معاينة رسمية قصيرة — " + track.trackName + " / " + track.artistName });
+  const track = (data.results || []).find(item => item.trackId === Number(trackId) && item.previewUrl && item.trackViewUrl);
+  if (!track) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "المعاينة غير متاحة لهذا المقطع.", show_alert: true });
+    return;
+  }
+  await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "جهزت روابط المقطع." });
+  await sendText(env, callback.message.chat.id,
+    "🎵 <b>" + escapeHtml(track.trackName) + "</b>\n" + escapeHtml(track.artistName) + "\nمعاينة رسمية قصيرة من Apple — اضغط للاستماع عبر البث، أو افتح صفحة المقطع.",
+    { reply_markup: { inline_keyboard: [[
+      { text: "▶️ استمع للمعاينة", url: track.previewUrl },
+      { text: " فتح في Apple Music", url: track.trackViewUrl }
+    ]] } });
 }
 async function sendText(env, chatId, text, extra = {}) {
   return telegram(env, "sendMessage", Object.assign({ chat_id: chatId, text, parse_mode: "HTML" }, extra));
