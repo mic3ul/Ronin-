@@ -404,8 +404,9 @@ async function handleCommands(env, message, member) {
     "🧠 سؤال": "/سؤال", "🚘 سيارات": "/سيارات", "🎭 صراحة": "/صراحة",
     "✊ حجر ورقة مقص": "/حجر", "⚖️ هذا أم ذاك": "/هذا_ام_ذاك", "🪙 رمية عملة": "/عملة",
     "📅 حضوري": "/حضور", "📜 المساعدة": "/مساعدة", "🆔 معرّفاتي": "/ايدي",
-    "📩 همسة": "/همسة", "📋 القوانين": "/القوانين", "🚨 بلاغ": "/بلاغ"
+    "📩 همسة": "/whisper_help", "🎵 موسيقى": "/يوت", "📋 القوانين": "/القوانين", "🚨 بلاغ": "/بلاغ"
   };
+  if (/^همسة(?:\s|$)/i.test(text) && message.reply_to_message) return handleWhisper(env, message, text);
   const command = buttonCommands[text] || (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
   const chatId = message.chat.id;
   const rankCommands = {
@@ -502,14 +503,17 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/help", "!help", "/مساعدة", "/مساعده"].includes(command)) {
-    const help = "<b>دليل رونين</b>\n\n<b>الملف والتفاعل</b>\n/ملفي — ملفك ومستواك\n/المتصدرين — أفضل الأعضاء\n/حضور — حضور يومي\n/ايدي — معرّفات المجموعة والعضو\n\n<b>الألعاب</b>\n/العاب — قائمة الألعاب\n/سؤال — أسئلة عامة\n/سيارات — معلومات السيارات\n/حجر — حجر ورقة مقص\n/صراحة — سؤال صراحة\n/هذا_ام_ذاك — اختر بين خيارين\n/عملة — رمية عملة\n\n<b>الخصوصية</b>\n/همسة @username نص — همسة خاصة\n\n<b>الرتب</b>\n/اضف_رفيق، /اضف_ثائر، /اضف_مجاهد، /اضف_مناضل، /اضف_مناصر، /ازالة_رتبة، /الرتب\n\n<b>الإدارة</b>\nبالرد على عضو: /حظر، /فك_الحظر، /كتم، /تقييد، /الغاء_كتم\nأضف مدة مثل 10m أو 2h للكتم والتقييد.\n/بلاغ — إرسال بلاغ\n/القوانين — قوانين المجموعة";
-    try {
-      const me=await telegram(env,"getMe",{});
-      const photos=await telegram(env,"getUserProfilePhotos",{user_id:me.id,limit:1});
-      const photo=photos.photos?.[0]?.at(-1);
-      if(photo?.file_id) await telegram(env,"sendPhoto",{chat_id:chatId,photo:photo.file_id,caption:help,parse_mode:"HTML",reply_markup:RONIN_KEYBOARD});
-      else await sendText(env,chatId,help,{reply_markup:RONIN_KEYBOARD});
-    } catch(e){console.warn("help image unavailable",e);await sendText(env,chatId,help,{reply_markup:RONIN_KEYBOARD});}
+    await sendCategoryHome(env, chatId);
+    return true;
+  }
+  if (["/whisper_help", "/همسة_مساعدة"].includes(command)) {
+    await sendText(env, chatId, "✉️ <b>طريقة إرسال همسة</b>\nاعمل رد على رسالة الشخص ثم اكتب:\n<code>همسة النص الذي تريد إرساله</code>\nسيحذف رونين رسالة الأمر من المجموعة ويرسل النص إلى الخاص. يجب أن يكون الشخص قد فتح البوت وأرسل /start.\nويمكنك أيضاً استخدام: <code>/همسة @username النص</code>.");
+    return true;
+  }
+  if (["/يوت", "/yt", "/music"].includes(command)) {
+    const query = text.replace(/^(?:\/يوت|\/yt|\/music)(?:@\w+)?\s*/i, "").trim();
+    try { await searchMusic(env, chatId, query); }
+    catch (error) { console.error("Music search failed", error); await sendText(env, chatId, "تعذر البحث الموسيقي الآن. حاول بعد قليل."); }
     return true;
   }
   if (command === "/report" || command === "!report") {
@@ -531,7 +535,7 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/games", "!games", "/العاب", "/ألعاب"].includes(command)) {
-    await sendText(env, chatId, "🎮 <b>ألعاب رونين</b>\n/profile — ملفك ومستواك وشاراتك\n/id — معرّفات المجموعة والعضو\n/help — كل الأوامر\n/quiz — سؤال سريع بأربع إجابات\n/cars — تحدي معلومات السيارات\n/rps — حجر ورقة مقص ضد البوت (لصاحب التحدي)\n/truth — صراحة عشوائية\n/wyr — هذا أم ذاك؟\n/coin — رمية عملة\n/checkin — حضور يومي +5 نقاط\n/top — أفضل 10 أعضاء\n/whisper @username نص — أرسل همسة خاصة");
+    await sendCategoryCard(env, chatId, "games");
     return true;
   }
   if (["/quiz", "!quiz", "/سؤال", "/cars", "/سيارات"].includes(command)) {
