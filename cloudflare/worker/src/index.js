@@ -63,7 +63,7 @@ const RONIN_KEYBOARD = {
     [{ text: "🧠 سؤال" }, { text: "🚘 سيارات" }, { text: "🎭 صراحة" }],
     [{ text: "✊ حجر ورقة مقص" }, { text: "⚖️ هذا أم ذاك" }, { text: "🪙 رمية عملة" }],
     [{ text: "📅 حضوري" }, { text: "📜 المساعدة" }, { text: "🆔 معرّفاتي" }],
-    [{ text: "📩 همسة" }, { text: "📋 القوانين" }, { text: "🚨 بلاغ" }]
+    [{ text: "📩 همسة" }, { text: "🎵 موسيقى" }, { text: "📋 القوانين" }, { text: "🚨 بلاغ" }]
   ],
   resize_keyboard: true,
   is_persistent: true,
