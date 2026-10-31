@@ -247,38 +247,33 @@ async function registerPrivateUser(env, user) {
     .bind(user.id, user.username ? user.username.toLowerCase() : null, user.first_name || "", user.id).run();
 }
 async function handleWhisper(env, message, text) {
-  const match = text.match(/^(?:\/whisper(?:@\w+)?|\/همسة)\s+@([A-Za-z0-9_]{5,32})\s+([\s\S]{1,700})$/i);
-  if (!match) {
-    await sendText(env, message.chat.id, "الاستخدام: /whisper @username نص الهمسة\nلازم المستلم يكون فتح البوت وأرسل /start أولاً.");
+  const replyUser = message.reply_to_message?.from;
+  const replyMatch = text.match(/^(?:\/?همسة|\/whisper(?:@\w+)?)\s+([\s\S]{1,700})$/i);
+  const mentionMatch = text.match(/^(?:\/whisper(?:@\w+)?|\/همسة)\s+@([A-Za-z0-9_]{5,32})\s+([\s\S]{1,700})$/i);
+  if (!replyUser && !mentionMatch) {
+    await sendText(env, message.chat.id, "لإرسال همسة: اعمل رد على رسالة الشخص واكتب «همسة نص الرسالة». أو استخدم /همسة @username نص.\nيجب أن يكون المستلم قد فتح البوت وأرسل /start.");
     return true;
   }
-  try {
-    await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id });
-  } catch {
-    await sendText(env, message.chat.id, "لم أرسل الهمسة حتى لا يظهر نصها في المجموعة. امنح البوت صلاحية حذف الرسائل ثم أعد المحاولة.");
-    return true;
+  const body = (replyUser ? replyMatch?.[1] : mentionMatch?.[2])?.trim();
+  if (!body) { await sendText(env, message.chat.id, "اكتب نص الهمسة بعد الأمر، مع الرد على رسالة المستلم."); return true; }
+  if (replyUser && (replyUser.is_bot || Number(replyUser.id) === Number(message.from.id))) {
+    await sendText(env, message.chat.id, "اختر رسالة عضو آخر لإرسال الهمسة."); return true;
   }
-  const username = match[1].toLowerCase();
-  const recipient = await env.DB.prepare("SELECT user_id, first_name FROM private_users WHERE username = ?").bind(username).first();
-  if (!recipient) {
-    await sendText(env, message.chat.id, "ما لقيت @" + escapeHtml(username) + " ضمن مستخدمي البوت. خليه يفتح البوت ويرسل /start أولاً.");
-    return true;
-  }
-  if (Number(recipient.user_id) === Number(message.from.id)) {
-    await sendText(env, message.chat.id, "ما ممكن ترسل همسة لنفسك 🙂");
-    return true;
-  }
-  const result = await env.DB.prepare("INSERT INTO whispers (sender_user_id, recipient_user_id, body) VALUES (?, ?, ?)")
-    .bind(message.from.id, recipient.user_id, match[2].trim()).run();
+  let recipient;
+  if (replyUser) recipient = await env.DB.prepare("SELECT user_id, first_name FROM private_users WHERE user_id=?").bind(replyUser.id).first();
+  else recipient = await env.DB.prepare("SELECT user_id, first_name FROM private_users WHERE username=?").bind(mentionMatch[1].toLowerCase()).first();
+  if (!recipient) { await sendText(env, message.chat.id, "المستلم لم يفتح البوت بعد. اطلب منه إرسال /start في الخاص أولاً."); return true; }
+  if (Number(recipient.user_id) === Number(message.from.id)) { await sendText(env, message.chat.id, "ما ممكن ترسل همسة لنفسك."); return true; }
+  try { await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id }); }
+  catch { await sendText(env, message.chat.id, "لم أرسل الهمسة حتى لا ينكشف نصها. امنح البوت صلاحية حذف الرسائل ثم أعد المحاولة."); return true; }
+  const result = await env.DB.prepare("INSERT INTO whispers (sender_user_id, recipient_user_id, body) VALUES (?, ?, ?)").bind(message.from.id, recipient.user_id, body).run();
   const id = result.meta.last_row_id;
   try {
-    await sendText(env, recipient.user_id, "📩 عندك همسة جديدة. اضغط لفتحها.", {
-      reply_markup: { inline_keyboard: [[{ text: "افتح الهمسة", callback_data: "whisper_open:" + id }]] }
-    });
-    await sendText(env, message.chat.id, "تم إرسال الهمسة إلى @" + escapeHtml(username) + " بشكل خاص.");
+    await sendText(env, recipient.user_id, "📩 عندك همسة جديدة. اضغط لفتحها.", { reply_markup: { inline_keyboard: [[{ text: "افتح الهمسة", callback_data: "whisper_open:" + id }]] } });
+    await sendText(env, message.chat.id, "تم إرسال الهمسة بشكل خاص.");
   } catch {
     await env.DB.prepare("UPDATE whispers SET status='failed' WHERE id=?").bind(id).run();
-    await sendText(env, message.chat.id, "تعذر إرسال الهمسة. المستلم قد يكون حظر البوت؛ خليه يرسل /start مجدداً.");
+    await sendText(env, message.chat.id, "تعذر إرسال الهمسة. تأكد أن المستلم لم يحظر البوت.");
   }
   return true;
 }
