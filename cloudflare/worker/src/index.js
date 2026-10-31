@@ -356,14 +356,14 @@ async function handleNewCallback(env, callback) {
   }
   if (data.startsWith("deezer:")) {
     const id=data.slice(7);
-    if(!/^\\d{1,15}$/.test(id)){await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"اختيار غير صالح.",show_alert:true});return true;}
+    if(!/^\d{1,15}$/.test(id)){await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"اختيار غير صالح.",show_alert:true});return true;}
     try {
       const response=await fetch("https://api.deezer.com/track/"+encodeURIComponent(id));
       if(!response.ok) throw new Error("Deezer lookup HTTP "+response.status);
       const track=await response.json();
       if(!track.preview||!track.link) throw new Error("Preview unavailable");
       await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"جهزت المعاينة."});
-      await sendText(env,callback.message.chat.id,"🎵 <b>"+escapeHtml(track.title||"مقطع موسيقي")+"</b>\\n"+escapeHtml(track.artist?.name||"")+"\\nمعاينة قصيرة من Deezer.",{reply_markup:{inline_keyboard:[[{text:"▶️ استمع للمعاينة",url:track.preview},{text:"فتح Deezer",url:track.link}]]}});
+      await sendText(env,callback.message.chat.id,"🎵 <b>"+escapeHtml(track.title||"مقطع موسيقي")+"</b>\n"+escapeHtml(track.artist?.name||"")+"\nمعاينة قصيرة من Deezer.",{reply_markup:{inline_keyboard:[[{text:"▶️ استمع للمعاينة",url:track.preview},{text:"فتح Deezer",url:track.link}]]}});
     } catch(error){console.error("Deezer preview failed",error);await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"تعذر جلب المعاينة.",show_alert:true});}
     return true;
   }
@@ -746,7 +746,7 @@ async function handleCallback(env, callback) {
   await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: action === "report_ban" ? "User banned and message deleted." : "Message deleted." });
 }
 async function duplicateFingerprint(message) {
-  const text=getText(message).normalize("NFKC").toLocaleLowerCase().replace(/\\s+/g," ").trim();
+  const text=getText(message).normalize("NFKC").toLocaleLowerCase().replace(/\s+/g," ").trim();
   const media=whisperMedia(message);
   const mediaKey=media ? String(media[1]) : "";
   const source=text || mediaKey;
@@ -784,7 +784,7 @@ async function handleMessage(env, message, edited = false) {
   if (!member) return;
   if (!edited && await handleCommands(env, message, member)) return;
   const text = getText(message);
-  if (!edited && !/^\\//.test(text.trim()) && await isRepeatedMessage(env,message).catch(error=>{console.warn("duplicate detection failed",error);return false;})) {
+  if (!edited && !/^\//.test(text.trim()) && await isRepeatedMessage(env,message).catch(error=>{console.warn("duplicate detection failed",error);return false;})) {
     await telegram(env,"deleteMessage",{chat_id:message.chat.id,message_id:message.message_id}).catch(error=>console.warn("duplicate delete failed",error));
     await recordViolation(env.DB,userId,"spam",message.chat.id);
     return;
