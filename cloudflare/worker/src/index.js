@@ -69,6 +69,52 @@ const RONIN_KEYBOARD = {
   is_persistent: true,
   input_field_placeholder: "اختر أمراً من قائمة رونين"
 };
+
+const CATEGORY_CARDS = {
+  games: { title: "🎲 الألعاب والتحديات", photo: "https://images.unsplash.com/photo-1606167668584-78701c57f13d?w=1000&auto=format&fit=crop&q=85", description: "اختر لعبة وابدأ التحدي مع المجموعة.", buttons: [[["سؤال سريع","/سؤال"],["تحدي السيارات","/سيارات"]],[["صراحة","/صراحة"],["هذا أم ذاك","/هذا_ام_ذاك"]],[["حجر ورقة مقص","/حجر"],["رمية عملة","/عملة"]]] },
+  profile: { title: "👤 الملف والتفاعل", photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=1000&auto=format&fit=crop&q=85", description: "تابع مستواك ونقاطك وترتيبك داخل المجموعة.", buttons: [[["ملفي","/ملفي"],["المتصدرون","/المتصدرين"]],[["الحضور اليومي","/حضور"],["معرّفاتي","/ايدي"]]] },
+  ranks: { title: "🏅 الرتب", photo: "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=1000&auto=format&fit=crop&q=85", description: "نظام الرتب والصلاحيات داخل المجموعة.", buttons: [[["عرض الرتب","/الرتب"]]] },
+  moderation: { title: "🛡️ الإدارة والحماية", photo: "https://images.unsplash.com/photo-1560253023-3ec5d502959f?w=1000&auto=format&fit=crop&q=85", description: "أوامر الإشراف تعمل بالرد على رسالة العضو.", buttons: [[["القوانين","/القوانين"],["طريقة البلاغ","/بلاغ"]]] },
+  privacy: { title: "✉️ الخصوصية والموسيقى", photo: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=1000&auto=format&fit=crop&q=85", description: "أرسل همسة بالرد على رسالة العضو، أو ابحث عن معاينة موسيقية.", buttons: [[["شرح الهمسة","/whisper_help"],["بحث موسيقي","/يوت"]]] }
+};
+async function sendCategoryCard(env, chatId, key) {
+  const card = CATEGORY_CARDS[key];
+  if (!card) return;
+  const keyboard = card.buttons.map(row => row.map(([label, command]) => ({ text: label, callback_data: "cmd:" + command })));
+  keyboard.push([{ text: "↩️ رجوع للفئات", callback_data: "menu:home" }]);
+  const payload = { chat_id: chatId, photo: card.photo, caption: "<b>" + card.title + "</b>\n" + card.description, parse_mode: "HTML", reply_markup: { inline_keyboard: keyboard } };
+  try { await telegram(env, "sendPhoto", payload); }
+  catch (error) { console.warn("Category image unavailable", key, error); await sendText(env, chatId, payload.caption, { reply_markup: payload.reply_markup }); }
+}
+async function sendCategoryHome(env, chatId) {
+  await sendText(env, chatId, "⚔️ <b>دليل رونين</b>\nاختر القسم الذي تريد فتحه:", {
+    reply_markup: { inline_keyboard: [
+      [{ text: "🎲 الألعاب", callback_data: "menu:games" }, { text: "👤 الملف والتفاعل", callback_data: "menu:profile" }],
+      [{ text: "🏅 الرتب", callback_data: "menu:ranks" }, { text: "🛡️ الإدارة", callback_data: "menu:moderation" }],
+      [{ text: "✉️ الهمسات والموسيقى", callback_data: "menu:privacy" }]
+    ] }
+  });
+}
+async function searchMusic(env, chatId, query) {
+  const clean = String(query || "").trim().slice(0, 100);
+  if (!clean) { await sendText(env, chatId, "اكتب اسم الأغنية بعد /يوت. مثال: /يوت Naruto Blue Bird"); return; }
+  const response = await fetch("https://itunes.apple.com/search?term=" + encodeURIComponent(clean) + "&entity=song&limit=6&country=US");
+  if (!response.ok) throw new Error("Music search unavailable");
+  const data = await response.json();
+  const tracks = (data.results || []).filter(track => track.previewUrl && track.trackId);
+  if (!tracks.length) { await sendText(env, chatId, "ما لقيت معاينة موسيقية متاحة لهذا البحث. جرّب اسم الأغنية أو الفنان بالإنجليزية."); return; }
+  const rows = tracks.slice(0, 6).map(track => [{ text: (track.trackName + " — " + track.artistName).slice(0, 60), callback_data: "music:" + track.trackId }]);
+  await sendText(env, chatId, "🎵 <b>نتائج البحث عن:</b> " + escapeHtml(clean) + "\nاختر مقطعاً لإرسال معاينة MP3 قصيرة داخل تيليجرام:", { reply_markup: { inline_keyboard: rows } });
+}
+async function sendMusicPreview(env, callback, trackId) {
+  const response = await fetch("https://itunes.apple.com/lookup?id=" + encodeURIComponent(trackId) + "&country=US");
+  if (!response.ok) throw new Error("Music lookup unavailable");
+  const data = await response.json();
+  const track = (data.results || []).find(item => item.trackId === Number(trackId) && item.previewUrl);
+  if (!track) { await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "المعاينة غير متاحة لهذا المقطع.", show_alert: true }); return; }
+  await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "أرسل المعاينة الصوتية." });
+  await telegram(env, "sendAudio", { chat_id: callback.message.chat.id, audio: track.previewUrl, title: track.trackName, performer: track.artistName, caption: "معاينة رسمية قصيرة — " + escapeHtml(track.trackName) + " / " + escapeHtml(track.artistName) });
+}
 async function sendText(env, chatId, text, extra = {}) {
   return telegram(env, "sendMessage", Object.assign({ chat_id: chatId, text, parse_mode: "HTML" }, extra));
 }
