@@ -75,7 +75,7 @@ const CATEGORY_CARDS = {
   profile: { title: "👤 الملف والتفاعل", photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=1000&auto=format&fit=crop&q=85", description: "تابع مستواك ونقاطك وترتيبك داخل المجموعة.", buttons: [[["ملفي","/ملفي"],["المتصدرون","/المتصدرين"]],[["الحضور اليومي","/حضور"],["معرّفاتي","/ايدي"]]] },
   ranks: { title: "🏅 الرتب", photo: "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=1000&auto=format&fit=crop&q=85", description: "نظام الرتب والصلاحيات داخل المجموعة.", buttons: [[["عرض الرتب","/الرتب"]]] },
   moderation: { title: "🛡️ الإدارة والحماية", photo: "https://images.unsplash.com/photo-1560253023-3ec5d502959f?w=1000&auto=format&fit=crop&q=85", description: "أوامر الإشراف تعمل بالرد على رسالة العضو.", buttons: [[["القوانين","/القوانين"],["طريقة البلاغ","/بلاغ"]]] },
-  privacy: { title: "✉️ الخصوصية والموسيقى", photo: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=1000&auto=format&fit=crop&q=85", description: "أرسل همسة بالرد على رسالة العضو، أو ابحث عن معاينة موسيقية.", buttons: [[["شرح الهمسة","/whisper_help"],["بحث موسيقي","/يوت"]]] }
+  privacy: { title: "✉️ الخصوصية والموسيقى", photo: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=1000&auto=format&fit=crop&q=85", description: "أرسل همسة بالرد على رسالة العضو، اختر نصاً أو وسائط، ثم أكملها في الخاص. الردود تصل سراً داخل المجموعة.", buttons: [[["شرح الهمسة","/whisper_help"],["بحث موسيقي","/يوت"]]] }
 };
 async function sendCategoryCard(env, chatId, key) {
   const card = CATEGORY_CARDS[key];
@@ -129,7 +129,7 @@ async function sendText(env, chatId, text, extra = {}) {
 async function sendRoninWelcome(env, chatId, group = false) {
   const caption = group
     ? "⚔️ <b>رونين وصل للمجموعة</b>\nأنا Ronin، رفيقكم للألعاب والتفاعل وإدارة المجموعة. استخدموا الأزرار بالأسفل أو /help لعرض الأوامر."
-    : "⚔️ <b>أهلاً بك في Ronin</b>\nأنا رفيقك في المجموعات. لإرسال همسة استخدم /whisper @username النص.";
+    : "⚔️ <b>أهلاً بك في Ronin</b>\nأنا رفيقك في المجموعات. لإرسال همسة: اعمل رد على رسالة العضو واكتب «همسة»، أو اكتب «همسة @username»، ثم اختر نصاً أو وسائط وأكمل الإرسال في الخاص.";
   const extra = group ? { reply_markup: RONIN_KEYBOARD } : {};
   try {
     const me = await telegram(env, "getMe", {});
