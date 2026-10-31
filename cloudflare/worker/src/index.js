@@ -275,9 +275,15 @@ async function handleWhisper(env, message, text) {
   ]]}});
   return true;
 }
-async function sendWhisperDeepLink(env,userId,token,label) {
+async function sendWhisperDeepLink(env,callback,token,label) {
   const me=await telegram(env,"getMe",{});
-  await sendText(env,userId,label+"\nاضغط لفتح محرر الهمسة:",{reply_markup:{inline_keyboard:[[{text:"✉️ فتح المحرر",url:"https://t.me/"+me.username+"?start=w_"+token}]]}});
+  const url="https://t.me/"+me.username+"?start=w_"+token;
+  await telegram(env,"sendMessage",{
+    chat_id:callback.message.chat.id,
+    text:label+"\nاضغط لفتح محرر الهمسة:",
+    ephemeral_message_parameters:{receiver_user_id:callback.from.id,callback_query_id:callback.id},
+    reply_markup:{inline_keyboard:[[{text:"✉️ فتح المحرر",url}]]}
+  });
 }
 function whisperMedia(message) {
   if(message.photo?.length) return ["photo",message.photo[message.photo.length-1].file_id];
@@ -320,7 +326,7 @@ async function handlePrivateWhisper(env,message) {
   if(start) {
     const draft=await env.DB.prepare("SELECT * FROM whisper_drafts WHERE token=? AND sender_user_id=? AND status='choosing' AND expires_at>CURRENT_TIMESTAMP").bind(start[1],message.from.id).first();
     if(!draft){await sendText(env,message.chat.id,"انتهت صلاحية محرر الهمسة. ابدأ من المجموعة مجدداً.");return true;}
-    await env.DB.prepare("UPDATE whisper_drafts SET mode='text',status='composing',expires_at=datetime('now','+15 minutes') WHERE token=?").bind(start[1]).run();
+    await env.DB.prepare("UPDATE whisper_drafts SET status='composing',expires_at=datetime('now','+15 minutes') WHERE token=?").bind(start[1]).run();
     await sendText(env,message.chat.id,"أرسل نص الهمسة أو الوسائط الآن. إذا اخترت الوسائط من المجموعة، أرسل الملف أو الصورة هنا.");
     return true;
   }
@@ -365,7 +371,7 @@ async function handleNewCallback(env, callback) {
     if(!draft){await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"انتهت صلاحية الهمسة.",show_alert:true});return true;}
     await env.DB.prepare("UPDATE whisper_drafts SET mode=? WHERE token=?").bind(mode,token).run();
     await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"افتح الخاص لإكمال الهمسة."});
-    await sendWhisperDeepLink(env,callback.from.id,token,mode==="text"?"✍️ همسة نصية":"🖼️ همسة وسائط");return true;
+    await sendWhisperDeepLink(env,callback,token,mode==="text"?"✍️ همسة نصية":"🖼️ همسة وسائط");return true;
   }
   if (data.startsWith("whisper_open:")) {
     const id = Number(data.split(":")[1]);
@@ -389,10 +395,14 @@ async function handleNewCallback(env, callback) {
     return true;
   }
   if (data.startsWith("whisper_reply:")) {
-    const id=Number(data.slice(14)),w=await env.DB.prepare("SELECT * FROM whispers WHERE id=?").bind(id).first();
+    const id=Number(data.slice("whisper_reply:".length));
+    const w=await env.DB.prepare("SELECT * FROM whispers WHERE id=?").bind(id).first();
     if(!w||Number(w.recipient_user_id)!==Number(callback.from.id)){await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"هذه الهمسة ليست لك.",show_alert:true});return true;}
-    await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"ميزة الرد تُفتح من الخاص."});
-    await sendText(env,callback.from.id,"للرد على الهمسة، افتح محادثة Ronin وأرسل /reply "+id);
+    const token=crypto.randomUUID().replace(/-/g,"").slice(0,24);
+    await env.DB.prepare("INSERT INTO whisper_drafts(token,chat_id,sender_user_id,recipient_user_id,mode,reply_to_id,status,created_at,expires_at) VALUES(?,?,?,?, 'text',?,'choosing',CURRENT_TIMESTAMP,datetime('now','+15 minutes'))")
+      .bind(token,w.chat_id||callback.message.chat.id,callback.from.id,w.sender_user_id,id).run();
+    await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"افتح محرر الرد."});
+    await sendWhisperDeepLink(env,callback,token,"↩️ اكتب ردك على الهمسة");
     return true;
   }
   if (data.startsWith("quiz:")) {
