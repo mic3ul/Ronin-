@@ -120,7 +120,7 @@ async function searchMusic(env, chatId, query) {
   }
   if (!tracks.length && failures.length) throw new Error(failures.join(" | "));
   if (!tracks.length) { await sendText(env, chatId, "ما لقيت معاينة موسيقية متاحة لهذا البحث. جرّب اسم الأغنية أو الفنان بالإنجليزية."); return; }
-  const rows = tracks.slice(0, 6).map(track => [{ text: (track.title + " — " + track.artist).slice(0, 60), callback_data: (provider === "apple" ? "music:" : "deezer:") + track.id }]);
+  const rows = tracks.slice(0, 6).map(track => [{ text: ((provider === "apple" ? track.trackName : track.title) + " — " + (provider === "apple" ? track.artistName : track.artist?.name || "")).slice(0, 60), callback_data: provider === "apple" ? "music:" + track.trackId : "deezer:" + track.id }]);
   await sendText(env, chatId, "🎵 <b>نتائج البحث عن:</b> " + escapeHtml(clean) + "\nاختر مقطعاً لفتح معاينة قصيرة:", { reply_markup: { inline_keyboard: rows } });
 }
 async function sendMusicPreview(env, callback, trackId) {
