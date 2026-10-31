@@ -757,7 +757,7 @@ async function duplicateFingerprint(message) {
   const media=whisperMedia(message);
   const mediaKey=media ? String(media[1]) : "";
   const source=text || mediaKey;
-  if(!source || source.length<2) return null;
+  if(!source) return null;
   const bytes=new TextEncoder().encode(source);
   const digest=await crypto.subtle.digest("SHA-256",bytes);
   return Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,"0")).join("");
