@@ -15,7 +15,7 @@ COPY . .
 RUN useradd -m -u 1000 botuser && mkdir -p /app/data && chown -R botuser:botuser /app
 USER botuser
 
-# Keep polling as the default; set RUN_MODE=webhook for the Cloudflare gateway.
+# Keep polling as the default; webhook mode serves the Python app directly.
 ENV RUN_MODE=polling
 EXPOSE 8080
 

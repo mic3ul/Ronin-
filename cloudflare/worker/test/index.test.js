@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { isDrugSpam, safeEqual } from "../src/index.js";
+import worker, { escapeHtml, isDrugSpam, normalizeCommand, safeEqual } from "../src/index.js";
 
 test("webhook secret comparison rejects wrong values", () => {
   assert.equal(safeEqual("secret_123", "secret_123"), true);
@@ -35,4 +35,19 @@ test("webhook rejects missing or invalid secret before touching D1", async () =>
   });
   const response = await worker.fetch(request, { DB: {}, TELEGRAM_BOT_TOKEN: "test" });
   assert.equal(response.status, 401);
+});
+
+
+test("HTML escaping neutralizes Telegram HTML metacharacters", () => {
+  assert.equal(escapeHtml(`<&>"`), "&lt;&amp;&gt;&quot;");
+});
+
+test("Arabic moderation command aliases normalize to supported commands", () => {
+  assert.equal(normalizeCommand("/فحص@RoninBot"), "/ping");
+  assert.equal(normalizeCommand("/القوانين"), "/rules");
+  assert.equal(normalizeCommand("/ملفي"), "/me");
+  assert.equal(normalizeCommand("/بلاغ"), "/report");
+  assert.equal(normalizeCommand("/حظر"), "/ban");
+  assert.equal(normalizeCommand("/فك_الحظر"), "/unban");
+  assert.equal(normalizeCommand("/custom@RoninBot"), "/custom");
 });

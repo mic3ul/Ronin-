@@ -18,8 +18,25 @@ export function isDrugSpam(value) {
   return /^(?:(?:на\s+)?проб[ау]|\d{1,2}(?:[.,]\d{1,2})?\s*(?:гр|г|gr|g)|(?:(?:на\s+)?проб[ау])\s+\d{1,2}(?:[.,]\d{1,2})?\s*(?:гр|г|gr|g)|\d{1,2}(?:[.,]\d{1,2})?\s*(?:гр|г|gr|g)\s+(?:на\s+)?проб[ау])$/u.test(normalized);
 }
 
-function escapeHtml(value) {
+export function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"]/g, (char) => char === "&" ? "&amp;" : char === "<" ? "&lt;" : char === ">" ? "&gt;" : "&quot;");
+}
+const COMMAND_ALIASES = new Map([
+  ["/فحص", "/ping"],
+  ["/حالة", "/ping"],
+  ["/قواعد", "/rules"],
+  ["/القوانين", "/rules"],
+  ["/ملفي", "/me"],
+  ["/معلوماتي", "/me"],
+  ["/بلاغ", "/report"],
+  ["/حظر", "/ban"],
+  ["/فك_الحظر", "/unban"],
+  ["/الغاء_الحظر", "/unban"],
+]);
+export function normalizeCommand(value) {
+  const token = String(value ?? "").trim().split(/\s+/)[0] || "";
+  const command = token.split("@")[0].toLowerCase();
+  return COMMAND_ALIASES.get(command) || command;
 }
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
@@ -81,7 +98,7 @@ async function logModeration(env, chat, user, reason, text) {
   if (!env.LOGS_CHAT_ID) return;
   const excerpt = String(text || "").slice(0, 400).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
   const name = escapeHtml([user.first_name, user.last_name].filter(Boolean).join(" ").slice(0, 80));
-  await sendText(env, env.LOGS_CHAT_ID, "<b>Ronin moderation</b>\nReason: " + reason + "\nChat: " + escapeHtml(chat.title || chat.id) + "\nUser: " + name + " (<code>" + user.id + "</code>)\n<code>" + excerpt + "</code>");
+  await sendText(env, env.LOGS_CHAT_ID, "<b>إجراء إشرافي من Ronin</b>\nالسبب: " + reason + "\nالمجموعة: " + escapeHtml(chat.title || chat.id) + "\nUser: " + name + " (<code>" + user.id + "</code>)\n<code>" + excerpt + "</code>");
 }
 async function maybeAutoBan(env, chatId, userId, member) {
   if (env.AUTOBAN_ENABLED !== "true") return;
@@ -100,44 +117,44 @@ async function checkBurst(env, db, message, member) {
   const prior = await db.prepare("SELECT chat_id FROM burst_alerts WHERE chat_id = ? AND alerted_at >= datetime('now', '-5 minutes')").bind(chatId).first();
   if (prior) return;
   await db.prepare("INSERT OR REPLACE INTO burst_alerts (chat_id, alerted_at) VALUES (?, CURRENT_TIMESTAMP)").bind(chatId).run();
-  if (env.LOGS_CHAT_ID) await sendText(env, env.LOGS_CHAT_ID, "⚠️ <b>Newcomer burst detected</b>\nChat: " + escapeHtml(message.chat.title || chatId) + "\nDistinct low-reputation users: " + result.total);
+  if (env.LOGS_CHAT_ID) await sendText(env, env.LOGS_CHAT_ID, "⚠️ <b>رصد انضمام جماعي</b>\nالمجموعة: " + escapeHtml(message.chat.title || chatId) + "\nDistinct low-reputation users: " + result.total);
   if (env.BURST_ACTION === "delete") await telegram(env, "deleteMessage", { chat_id: chatId, message_id: message.message_id });
 }
 async function handleCommands(env, message, member) {
   const text = getText(message).trim();
-  const command = (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
+  const command = normalizeCommand(text);
   const chatId = message.chat.id;
-  if (["/ping", "!ping"].includes(command)) { await sendText(env, chatId, "Ronin is online."); return true; }
-  if (["/rules", "!rules", "/правила"].includes(command)) { await sendText(env, chatId, env.RULES_TEXT || "Please follow the group rules and respect other members."); return true; }
+  if (["/ping", "!ping"].includes(command)) { await sendText(env, chatId, "رونين يعمل."); return true; }
+  if (["/rules", "!rules", "/правила"].includes(command)) { await sendText(env, chatId, env.RULES_TEXT || "يرجى الالتزام بقوانين المجموعة واحترام الأعضاء."); return true; }
   if (["/me", "!me", "/info", "/lvl"].includes(command)) {
-    await sendText(env, chatId, "<b>" + escapeHtml(message.from.first_name || "Member") + "</b>\nMessages: " + member.message_count + "\nReputation: " + member.reputation_points + "\nSpam violations: " + member.spam_violations + "\nProfanity violations: " + member.profanity_violations);
+    await sendText(env, chatId, "<b>" + escapeHtml(message.from.first_name || "Member") + "</b>\nالرسائل: " + member.message_count + "\nالسمعة: " + member.reputation_points + "\nمخالفات الإزعاج: " + member.spam_violations + "\nمخالفات الألفاظ: " + member.profanity_violations);
     return true;
   }
   if (command === "/report" || command === "!report") {
     const target = message.reply_to_message;
     if (!target || !target.from || target.from.id === message.from.id || !env.REPORTS_CHAT_ID) {
-      await sendText(env, chatId, "Reply to a message to report it. Reports are unavailable until REPORTS_CHAT_ID is configured.");
+      await sendText(env, chatId, "ردّ على رسالة العضو المراد الإبلاغ عنه. استقبال البلاغات غير مفعّل حتى تُضبط قناة البلاغات.");
       return true;
     }
-    if (await isChatAdmin(env, chatId, target.from.id).catch(() => false)) { await sendText(env, chatId, "Administrators cannot be reported."); return true; }
+    if (await isChatAdmin(env, chatId, target.from.id).catch(() => false)) { await sendText(env, chatId, "لا يمكن الإبلاغ عن مشرفي المجموعة."); return true; }
     const note = await sendText(env, env.REPORTS_CHAT_ID,
-      "<b>New report</b>\nChat: " + (message.chat.title || chatId) + "\nReported user: " + escapeHtml(target.from.first_name || "Member") + " (<code>" + target.from.id + "</code>)\nReporter: <code>" + message.from.id + "</code>\nMessage: " + escapeHtml(getText(target).slice(0, 600)),
+      "<b>بلاغ جديد</b>\nالمجموعة: " + escapeHtml(message.chat.title || chatId) + "\nالعضو المبلّغ عنه: " + escapeHtml(target.from.first_name || "Member") + " (<code>" + target.from.id + "</code>)\nمقدّم البلاغ: <code>" + message.from.id + "</code>\nالرسالة: " + escapeHtml(getText(target).slice(0, 600)),
       { reply_markup: { inline_keyboard: [[
-        { text: "Delete", callback_data: "report_del|" + chatId + "|" + target.message_id + "|" + target.from.id },
-        { text: "Ban + delete", callback_data: "report_ban|" + chatId + "|" + target.message_id + "|" + target.from.id },
-        { text: "Dismiss", callback_data: "report_dismiss" },
+        { text: "حذف الرسالة", callback_data: "report_del|" + chatId + "|" + target.message_id + "|" + target.from.id },
+        { text: "حظر وحذف", callback_data: "report_ban|" + chatId + "|" + target.message_id + "|" + target.from.id },
+        { text: "تجاهل", callback_data: "report_dismiss" },
       ]] } });
     await env.DB.prepare("INSERT OR IGNORE INTO reports (report_chat_id, report_message_id, source_chat_id, source_message_id, reported_user_id, reporter_user_id) VALUES (?, ?, ?, ?, ?, ?)").bind(env.REPORTS_CHAT_ID, note.message_id, chatId, target.message_id, target.from.id, message.from.id).run();
-    await sendText(env, chatId, "Your report has been sent to the moderators.");
+    await sendText(env, chatId, "تم إرسال البلاغ إلى المشرفين.");
     return true;
   }
   if (["/ban", "!ban", "/unban", "!unban"].includes(command)) {
     if (!message.reply_to_message || !message.reply_to_message.from || !await isChatAdmin(env, chatId, message.from.id).catch(() => false)) return true;
     const targetId = message.reply_to_message.from.id;
-    if (await isChatAdmin(env, chatId, targetId).catch(() => false)) { await sendText(env, chatId, "I cannot ban or unban a group administrator."); return true; }
+    if (await isChatAdmin(env, chatId, targetId).catch(() => false)) { await sendText(env, chatId, "لا يمكن حظر مشرف في المجموعة أو فك حظره."); return true; }
     const method = command.endsWith("unban") ? "unbanChatMember" : "banChatMember";
     await telegram(env, method, { chat_id: chatId, user_id: targetId });
-    await sendText(env, chatId, method === "banChatMember" ? "User banned." : "User unbanned.");
+    await sendText(env, chatId, method === "banChatMember" ? "تم حظر العضو." : "تم فك حظر العضو.");
     return true;
   }
   return false;
@@ -147,18 +164,18 @@ async function handleCallback(env, callback) {
   const action = parts[0];
   if (action === "report_dismiss") {
     const authorized = await isChatAdmin(env, callback.message.chat.id, callback.from.id).catch(() => false);
-    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: authorized ? "Report dismissed." : "Administrator access required.", show_alert: !authorized });
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: authorized ? "تم تجاهل البلاغ." : "هذه العملية للمشرفين فقط.", show_alert: !authorized });
     return;
   }
-  if (!["report_del", "report_ban"].includes(action)) { await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "Unknown action." }); return; }
+  if (!["report_del", "report_ban"].includes(action)) { await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "إجراء غير معروف." }); return; }
   const chatId = Number(parts[1]), messageId = Number(parts[2]), userId = Number(parts[3]);
   const authorized = await isChatAdmin(env, callback.message.chat.id, callback.from.id).catch(() => false);
   if (![chatId, messageId, userId].every(Number.isSafeInteger) || !authorized) {
-    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "Administrator access required.", show_alert: true }); return;
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "هذه العملية للمشرفين فقط.", show_alert: true }); return;
   }
   await telegram(env, "deleteMessage", { chat_id: chatId, message_id: messageId }).catch(() => null);
   if (action === "report_ban") await telegram(env, "banChatMember", { chat_id: chatId, user_id: userId });
-  await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: action === "report_ban" ? "User banned and message deleted." : "Message deleted." });
+  await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: action === "report_ban" ? "تم حظر العضو وحذف رسالته." : "تم حذف الرسالة." });
 }
 async function handleMessage(env, message, edited = false) {
   if (!message || !message.from || message.from.is_bot || !isGroup(message.chat)) return;

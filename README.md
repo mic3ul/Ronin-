@@ -381,3 +381,12 @@ and test the Worker first, then stop the polling instance and register the
 webhook. Do not run polling and webhook delivery simultaneously for the same
 bot. The Cloudflare implementation is a staged native port, not yet feature-
 identical to the full Python runtime.
+
+
+### Runtime separation
+
+The Docker `RUN_MODE=webhook` option starts the Python/aiogram webhook server.
+Its `TELEGRAM_WEBHOOK_URL` must be a public HTTPS address routed to that
+Python service. It must not point at the native Cloudflare Worker: the Worker
+processes Telegram updates itself and does not proxy them to Python. For the
+Workers + D1 deployment, follow [cloudflare/worker/README.md](cloudflare/worker/README.md).

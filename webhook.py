@@ -1,8 +1,8 @@
-"""Run Ronin behind a Cloudflare Worker Telegram webhook gateway.
+"""Run Ronin as a direct aiogram webhook server.
 
-The Worker is the public Telegram endpoint. This Python process remains the
-feature engine so the existing aiogram handlers, middleware, database layer,
-scheduler, ML models, and moderation services keep their current behavior.
+The configured public URL must route Telegram updates to this Python process.
+The native Cloudflare Worker is a separate runtime and does not proxy updates
+to this server.
 """
 import logging
 import os
@@ -32,7 +32,7 @@ def create_webhook_app() -> tuple[web.Application, Bot]:
     if not token:
         raise RuntimeError("BOT_TOKEN is required")
     if not webhook_url.startswith("https://"):
-        raise RuntimeError("TELEGRAM_WEBHOOK_URL must be the HTTPS Cloudflare Worker URL")
+        raise RuntimeError("TELEGRAM_WEBHOOK_URL must be the public HTTPS URL routed to this Python webhook server")
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", secret):
         raise RuntimeError("WEBHOOK_SECRET must use 1-256 Telegram-supported characters")
 
@@ -78,7 +78,7 @@ def create_webhook_app() -> tuple[web.Application, Bot]:
             allowed_updates=dispatcher.resolve_used_update_types(),
             drop_pending_updates=False,
         )
-        logger.info("Telegram webhook registered through Cloudflare Worker")
+        logger.info("Telegram webhook registered for the Python runtime")
 
     app.on_startup.append(set_telegram_webhook)
     return app, bot
