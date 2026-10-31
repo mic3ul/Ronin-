@@ -113,7 +113,7 @@ async function sendMusicPreview(env, callback, trackId) {
   const track = (data.results || []).find(item => item.trackId === Number(trackId) && item.previewUrl);
   if (!track) { await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "المعاينة غير متاحة لهذا المقطع.", show_alert: true }); return; }
   await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "أرسل المعاينة الصوتية." });
-  await telegram(env, "sendAudio", { chat_id: callback.message.chat.id, audio: track.previewUrl, title: track.trackName, performer: track.artistName, caption: "معاينة رسمية قصيرة — " + escapeHtml(track.trackName) + " / " + escapeHtml(track.artistName) });
+  await telegram(env, "sendAudio", { chat_id: callback.message.chat.id, audio: track.previewUrl, title: track.trackName, performer: track.artistName, caption: "معاينة رسمية قصيرة — " + track.trackName + " / " + track.artistName });
 }
 async function sendText(env, chatId, text, extra = {}) {
   return telegram(env, "sendMessage", Object.assign({ chat_id: chatId, text, parse_mode: "HTML" }, extra));
