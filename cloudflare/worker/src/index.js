@@ -98,22 +98,29 @@ async function sendCategoryHome(env, chatId) {
 async function searchMusic(env, chatId, query) {
   const clean = String(query || "").trim().slice(0, 100);
   if (!clean) { await sendText(env, chatId, "اكتب اسم الأغنية بعد /يوت. مثال: /يوت Naruto Blue Bird"); return; }
-  let tracks = [], provider = "apple";
+  let tracks = [], provider = "apple", failures = [];
   try {
-    const response = await fetch("https://itunes.apple.com/search?term=" + encodeURIComponent(clean) + "&entity=song&limit=6&country=US", { headers: { "accept": "application/json" } });
+    const response = await fetch("https://itunes.apple.com/search?term=" + encodeURIComponent(clean) + "&entity=song&limit=6&country=US", { headers: { "accept": "application/json" }, signal: AbortSignal.timeout(9000) });
     if (!response.ok) throw new Error("Apple HTTP " + response.status);
     const data = await response.json();
-    tracks = (data.results || []).filter(track => track.previewUrl && track.trackId);
-  } catch (error) { console.warn("Apple music provider failed", String(error)); }
+    tracks = (data.results || []).filter(t => t.previewUrl && t.trackId).map(t => ({
+      id: String(t.trackId), title: t.trackName || "مقطع موسيقي", artist: t.artistName || "", preview: t.previewUrl, page: t.trackViewUrl
+    }));
+  } catch (error) { failures.push("Apple: " + String(error?.message || error)); }
   if (!tracks.length) {
     provider = "deezer";
-    const response = await fetch("https://api.deezer.com/search?q=" + encodeURIComponent(clean) + "&limit=6", { headers: { "accept": "application/json" } });
-    if (!response.ok) throw new Error("Music providers unavailable (Deezer HTTP " + response.status + ")");
-    const data = await response.json();
-    tracks = (data.data || []).filter(track => track.preview && track.id);
+    try {
+      const response = await fetch("https://api.deezer.com/search?q=" + encodeURIComponent(clean) + "&limit=6", { headers: { "accept": "application/json" }, signal: AbortSignal.timeout(9000) });
+      if (!response.ok) throw new Error("Deezer HTTP " + response.status);
+      const data = await response.json();
+      tracks = (data.data || []).filter(t => t.preview && t.id).map(t => ({
+        id: String(t.id), title: t.title || "مقطع موسيقي", artist: t.artist?.name || "", preview: t.preview, page: t.link
+      }));
+    } catch (error) { failures.push("Deezer: " + String(error?.message || error)); }
   }
+  if (!tracks.length && failures.length) throw new Error(failures.join(" | "));
   if (!tracks.length) { await sendText(env, chatId, "ما لقيت معاينة موسيقية متاحة لهذا البحث. جرّب اسم الأغنية أو الفنان بالإنجليزية."); return; }
-  const rows = tracks.slice(0, 6).map(track => [{ text: (track.title + " — " + (track.artist?.name || track.artistName || "")).slice(0, 60), callback_data: (provider === "apple" ? "music:" : "deezer:") + track.id }]);
+  const rows = tracks.slice(0, 6).map(track => [{ text: (track.title + " — " + track.artist).slice(0, 60), callback_data: (provider === "apple" ? "music:" : "deezer:") + track.id }]);
   await sendText(env, chatId, "🎵 <b>نتائج البحث عن:</b> " + escapeHtml(clean) + "\nاختر مقطعاً لفتح معاينة قصيرة:", { reply_markup: { inline_keyboard: rows } });
 }
 async function sendMusicPreview(env, callback, trackId) {
@@ -532,7 +539,7 @@ async function handleCommands(env, message, member) {
     await sendText(env,chatId,"تم تحديث رتبة <b>"+escapeHtml(target.first_name||"العضو")+"</b> إلى <b>"+RANKS[next].label+"</b>.");
     return true;
   }
-  const moderation={"/حظر":"ban","/فك_الحظر":"unban","/كتم":"mute","/تقييد":"restrict","/الغاء_كتم":"unmute"};
+  const moderation={"/حظر":"ban","/فك_الحظر":"unban","/كتم":"mute","/تقييد":"restrict","/الغاء_كتم":"unmute","/رفع":"unmute"};
   if(moderation[command]) {
     const target=message.reply_to_message?.from;
     if(!target || target.is_bot || target.id===message.from.id) {
@@ -565,7 +572,7 @@ async function handleCommands(env, message, member) {
       await sendText(env,chatId,"تم تنفيذ <b>"+labels[action]+"</b> على العضو.");
     } catch(error) {
       console.error("Ronin moderation action failed",error);
-      await sendText(env,chatId,"تعذر تنفيذ الأمر. تأكد أن Ronin مشرف ويملك صلاحية حظر وتقييد الأعضاء.");
+      await sendText(env,chatId,"تعذر تنفيذ الأمر: "+escapeHtml(String(error?.message||"خطأ غير معروف").slice(0,220))+"\\nتأكد أن Ronin مشرف ويملك صلاحية تقييد الأعضاء.");
     }
     return true;
   }
