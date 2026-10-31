@@ -255,35 +255,78 @@ async function registerPrivateUser(env, user) {
     .bind(user.id, user.username ? user.username.toLowerCase() : null, user.first_name || "", user.id).run();
 }
 async function handleWhisper(env, message, text) {
-  const replyUser = message.reply_to_message?.from;
-  const replyMatch = text.match(/^(?:\/?همسة|\/whisper(?:@\w+)?)\s+([\s\S]{1,700})$/i);
-  const mentionMatch = text.match(/^(?:\/whisper(?:@\w+)?|\/همسة)\s+@([A-Za-z0-9_]{5,32})\s+([\s\S]{1,700})$/i);
-  if (!replyUser && !mentionMatch) {
-    await sendText(env, message.chat.id, "لإرسال همسة: اعمل رد على رسالة الشخص واكتب «همسة نص الرسالة». أو استخدم /همسة @username نص.\nيجب أن يكون المستلم قد فتح البوت وأرسل /start.");
-    return true;
+  const target = message.reply_to_message?.from;
+  const m = text.match(/^(?:همسة|\\/whisper(?:@\\w+)?|\\/همسة)\\s+@([A-Za-z0-9_]{5,32})\\s*$/i);
+  let recipient = target ? { user_id: target.id, first_name: target.first_name } :
+    (m ? await env.DB.prepare("SELECT user_id, first_name FROM private_users WHERE username=?").bind(m[1].toLowerCase()).first() : null);
+  if (!recipient || target?.is_bot || Number(recipient.user_id) === Number(message.from.id)) {
+    await sendText(env, message.chat.id, "لإرسال همسة: اعمل رد على رسالة المستلم واكتب «همسة»، أو اكتب «همسة @username»."); return true;
   }
-  const body = (replyUser ? replyMatch?.[1] : mentionMatch?.[2])?.trim();
-  if (!body) { await sendText(env, message.chat.id, "اكتب نص الهمسة بعد الأمر، مع الرد على رسالة المستلم."); return true; }
-  if (replyUser && (replyUser.is_bot || Number(replyUser.id) === Number(message.from.id))) {
-    await sendText(env, message.chat.id, "اختر رسالة عضو آخر لإرسال الهمسة."); return true;
-  }
-  let recipient;
-  if (replyUser) recipient = await env.DB.prepare("SELECT user_id, first_name FROM private_users WHERE user_id=?").bind(replyUser.id).first();
-  else recipient = await env.DB.prepare("SELECT user_id, first_name FROM private_users WHERE username=?").bind(mentionMatch[1].toLowerCase()).first();
-  if (!recipient) { await sendText(env, message.chat.id, "المستلم لم يفتح البوت بعد. اطلب منه إرسال /start في الخاص أولاً."); return true; }
-  if (Number(recipient.user_id) === Number(message.from.id)) { await sendText(env, message.chat.id, "ما ممكن ترسل همسة لنفسك."); return true; }
-  try { await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id }); }
-  catch { await sendText(env, message.chat.id, "لم أرسل الهمسة حتى لا ينكشف نصها. امنح البوت صلاحية حذف الرسائل ثم أعد المحاولة."); return true; }
-  const result = await env.DB.prepare("INSERT INTO whispers (sender_user_id, recipient_user_id, body) VALUES (?, ?, ?)").bind(message.from.id, recipient.user_id, body).run();
-  const id = result.meta.last_row_id;
   try {
-    await sendText(env, recipient.user_id, "📩 عندك همسة جديدة. اضغط لفتحها.", { reply_markup: { inline_keyboard: [[{ text: "افتح الهمسة", callback_data: "whisper_open:" + id }]] } });
-    await sendText(env, message.chat.id, "تم إرسال الهمسة بشكل خاص.");
-  } catch {
+    const member = await telegram(env, "getChatMember", { chat_id: message.chat.id, user_id: recipient.user_id });
+    if (member.status === "left" || member.status === "kicked") { await sendText(env, message.chat.id, "المستلم ليس عضواً في المجموعة."); return true; }
+  } catch { await sendText(env, message.chat.id, "تعذر التحقق من المستلم."); return true; }
+  const token = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+  await env.DB.prepare("INSERT INTO whisper_drafts(token,chat_id,sender_user_id,recipient_user_id,status,created_at,expires_at) VALUES(?,?,?,?,'choosing',CURRENT_TIMESTAMP,datetime('now','+15 minutes'))")
+    .bind(token,message.chat.id,message.from.id,recipient.user_id).run();
+  await sendText(env,message.chat.id,"📨 <b>همسة إلى "+escapeHtml(recipient.first_name||"الرفيق")+"</b>\nاختر نوع الهمسة:",{reply_markup:{inline_keyboard:[[
+    {text:"✍️ نص",callback_data:"whisper_type:"+token+":text"},
+    {text:"🖼️ وسائط",callback_data:"whisper_type:"+token+":media"}
+  ]]}});
+  return true;
+}
+async function sendWhisperDeepLink(env,userId,token,label) {
+  const me=await telegram(env,"getMe",{});
+  await sendText(env,userId,label+"\nاضغط لفتح محرر الهمسة:",{reply_markup:{inline_keyboard:[[{text:"✉️ فتح المحرر",url:"https://t.me/"+me.username+"?start=w_"+token}]]}});
+}
+function whisperMedia(message) {
+  if(message.photo?.length) return ["photo",message.photo[message.photo.length-1].file_id];
+  for(const k of ["video","animation","document","audio","voice","video_note","sticker"]) if(message[k]?.file_id) return [k,message[k].file_id];
+  return null;
+}
+async function finishWhisperDraft(env,draft,message) {
+  const media=whisperMedia(message), body=(message.text||message.caption||"").trim();
+  if((draft.mode==="text" && (!body||media)) || (draft.mode==="media"&&!media)) {
+    await sendText(env,message.chat.id,draft.mode==="text"?"أرسل نصاً فقط.":"أرسل صورة أو فيديو أو ملفاً أو صوتاً أو ملصقاً."); return true;
+  }
+  const bot=await telegram(env,"getMe",{});
+  const botMember=await telegram(env,"getChatMember",{chat_id:draft.chat_id,user_id:bot.id});
+  if(!["administrator","creator"].includes(botMember.status)) {
+    await sendText(env,message.chat.id,"يجب أن يكون Ronin مشرفاً في المجموعة حتى يرسل الهمسات الخاصة داخلها.");
+    await env.DB.prepare("UPDATE whisper_drafts SET status='failed' WHERE token=?").bind(draft.token).run(); return true;
+  }
+  const row=await env.DB.prepare("INSERT INTO whispers(sender_user_id,recipient_user_id,body) VALUES(?,?,?)").bind(draft.sender_user_id,draft.recipient_user_id,body).run();
+  const id=row.meta.last_row_id, base={chat_id:draft.chat_id,ephemeral_message_parameters:{receiver_user_id:draft.recipient_user_id},reply_markup:{inline_keyboard:[[{text:"↩️ رد على الهمسة",callback_data:"whisper_reply:"+id}]]}};
+  try {
+    if(!media) await telegram(env,"sendMessage",{...base,text:"📩 <b>يا رفيق وصلتك برقية</b>\n"+escapeHtml(body),parse_mode:"HTML"});
+    else {
+      const methods={photo:"sendPhoto",video:"sendVideo",animation:"sendAnimation",document:"sendDocument",audio:"sendAudio",voice:"sendVoice",video_note:"sendVideoNote",sticker:"sendSticker"};
+      const [kind,fileId]=media,payload={...base,[kind]:fileId};
+      if(["photo","video","animation","document","audio","voice"].includes(kind)){payload.caption="📩 يا رفيق وصلتك برقية"+(body?"\n"+escapeHtml(body.slice(0,850)):"");payload.parse_mode="HTML";}
+      await telegram(env,methods[kind],payload);
+    }
+    await env.DB.prepare("UPDATE whispers SET status='opened' WHERE id=?").bind(id).run();
+    await env.DB.prepare("UPDATE whisper_drafts SET status='sent' WHERE token=?").bind(draft.token).run();
+    await sendText(env,message.chat.id,"✅ تم إرسال الهمسة سراً داخل المجموعة.");
+  } catch(error) {
+    console.error("ephemeral whisper failed",error);
     await env.DB.prepare("UPDATE whispers SET status='failed' WHERE id=?").bind(id).run();
-    await sendText(env, message.chat.id, "تعذر إرسال الهمسة. تأكد أن المستلم لم يحظر البوت.");
+    await sendText(env,message.chat.id,"تعذر إيصال الهمسة. تحقق من إصدار تيليجرام وصلاحيات Ronin.");
   }
   return true;
+}
+async function handlePrivateWhisper(env,message) {
+  const text=(message.text||"").trim(),start=text.match(/^\\/start\\s+w_([a-f0-9]{24})$/i);
+  if(start) {
+    const draft=await env.DB.prepare("SELECT * FROM whisper_drafts WHERE token=? AND sender_user_id=? AND status='choosing' AND expires_at>CURRENT_TIMESTAMP").bind(start[1],message.from.id).first();
+    if(!draft){await sendText(env,message.chat.id,"انتهت صلاحية محرر الهمسة. ابدأ من المجموعة مجدداً.");return true;}
+    await env.DB.prepare("UPDATE whisper_drafts SET mode='text',status='composing',expires_at=datetime('now','+15 minutes') WHERE token=?").bind(start[1]).run();
+    await sendText(env,message.chat.id,"أرسل نص الهمسة أو الوسائط الآن. إذا اخترت الوسائط من المجموعة، أرسل الملف أو الصورة هنا.");
+    return true;
+  }
+  const draft=await env.DB.prepare("SELECT * FROM whisper_drafts WHERE sender_user_id=? AND status='composing' AND expires_at>CURRENT_TIMESTAMP ORDER BY created_at DESC LIMIT 1").bind(message.from.id).first();
+  if(!draft)return false;
+  return finishWhisperDraft(env,draft,message);
 }
 
 async function handleNewCallback(env, callback) {
@@ -315,6 +358,15 @@ async function handleNewCallback(env, callback) {
     if (member) await handleCommands(env, { ...callback.message, from: callback.from, text: commandText, reply_to_message: null }, member);
     return true;
   }
+  if (data.startsWith("whisper_type:")) {
+    const [,token,mode]=data.split(":");
+    if(!/^[a-f0-9]{24}$/i.test(token)||!["text","media"].includes(mode)){await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"اختيار غير صالح.",show_alert:true});return true;}
+    const draft=await env.DB.prepare("SELECT * FROM whisper_drafts WHERE token=? AND sender_user_id=? AND status='choosing' AND expires_at>CURRENT_TIMESTAMP").bind(token,callback.from.id).first();
+    if(!draft){await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"انتهت صلاحية الهمسة.",show_alert:true});return true;}
+    await env.DB.prepare("UPDATE whisper_drafts SET mode=? WHERE token=?").bind(mode,token).run();
+    await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"افتح الخاص لإكمال الهمسة."});
+    await sendWhisperDeepLink(env,callback.from.id,token,mode==="text"?"✍️ همسة نصية":"🖼️ همسة وسائط");return true;
+  }
   if (data.startsWith("whisper_open:")) {
     const id = Number(data.split(":")[1]);
     const whisper = await env.DB.prepare("SELECT * FROM whispers WHERE id=?").bind(id).first();
@@ -334,6 +386,13 @@ async function handleNewCallback(env, callback) {
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة." });
     await sendText(env, callback.from.id, "💌 <b>همستك:</b>\n" + escapeHtml(whisper.body));
     await sendText(env, whisper.sender_user_id, "📭 تم فتح همستك من المستلم.");
+    return true;
+  }
+  if (data.startsWith("whisper_reply:")) {
+    const id=Number(data.slice(14)),w=await env.DB.prepare("SELECT * FROM whispers WHERE id=?").bind(id).first();
+    if(!w||Number(w.recipient_user_id)!==Number(callback.from.id)){await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"هذه الهمسة ليست لك.",show_alert:true});return true;}
+    await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"ميزة الرد تُفتح من الخاص."});
+    await sendText(env,callback.from.id,"للرد على الهمسة، افتح محادثة Ronin وأرسل /reply "+id);
     return true;
   }
   if (data.startsWith("quiz:")) {
@@ -414,7 +473,7 @@ async function handleCommands(env, message, member) {
     "📅 حضوري": "/حضور", "📜 المساعدة": "/مساعدة", "🆔 معرّفاتي": "/ايدي",
     "📩 همسة": "/whisper_help", "🎵 موسيقى": "/يوت", "📋 القوانين": "/القوانين", "🚨 بلاغ": "/بلاغ"
   };
-  if (/^همسة(?:\s|$)/i.test(text) && message.reply_to_message) return handleWhisper(env, message, text);
+  if (/^همسة(?:\\s|$)/i.test(text) || /^\\/whisper(?:@\\w+)?(?:\\s|$)/i.test(text) || /^\\/همسة(?:\\s|$)/i.test(text)) return handleWhisper(env, message, text);
   const command = buttonCommands[text] || (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
   const chatId = message.chat.id;
   const rankCommands = {
@@ -707,9 +766,8 @@ async function processUpdate(update, env) {
   }
   if (update.message && update.message.chat && update.message.chat.type === "private") {
     await registerPrivateUser(env, update.message.from);
-    if ((update.message.text || "").trim().split(/\s+/)[0] === "/start") {
-      await sendRoninWelcome(env, update.message.chat.id, false);
-    }
+    const handledWhisper = await handlePrivateWhisper(env, update.message);
+    if (!handledWhisper && (update.message.text || "").trim().split(/\s+/)[0] === "/start") await sendRoninWelcome(env, update.message.chat.id, false);
   }
   if (update.message) await handleMessage(env, update.message);
   if (update.edited_message) await handleMessage(env, update.edited_message, true);
