@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { isDrugSpam, safeEqual } from "../src/index.js";
+import worker, { getProfileLevel, isDrugSpam, safeEqual } from "../src/index.js";
 
 test("webhook secret comparison rejects wrong values", () => {
   assert.equal(safeEqual("secret_123", "secret_123"), true);
@@ -35,4 +35,29 @@ test("webhook rejects missing or invalid secret before touching D1", async () =>
   });
   const response = await worker.fetch(request, { DB: {}, TELEGRAM_BOT_TOKEN: "test" });
   assert.equal(response.status, 401);
+});
+
+test("profile levels advance at deterministic reputation thresholds", () => {
+  assert.deepEqual(getProfileLevel(0), { level: 1, currentXp: 0, nextLevelXp: 50, remainingXp: 50 });
+  assert.equal(getProfileLevel(49).level, 1);
+  assert.equal(getProfileLevel(50).level, 2);
+  assert.equal(getProfileLevel(199).level, 2);
+  assert.equal(getProfileLevel(200).level, 3);
+  assert.equal(getProfileLevel(-20).level, 1);
+});
+
+test("webhook setup endpoint rejects unauthenticated requests", async () => {
+  const request = new Request("https://ronin.test/telegram/setup", { method: "POST" });
+  const response = await worker.fetch(request, { TELEGRAM_WEBHOOK_SECRET: "expected-secret", TELEGRAM_BOT_TOKEN: "test" });
+  assert.equal(response.status, 401);
+});
+
+test("webhook setup endpoint requires a configured bot token", async () => {
+  const request = new Request("https://ronin.test/telegram/setup", {
+    method: "POST",
+    headers: { "X-Ronin-Setup-Key": "expected-secret" }
+  });
+  const response = await worker.fetch(request, { TELEGRAM_WEBHOOK_SECRET: "expected-secret" });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "bot_token_not_configured" });
 });

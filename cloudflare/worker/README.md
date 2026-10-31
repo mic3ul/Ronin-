@@ -31,7 +31,13 @@ Implemented in this first native port:
 - Known VPN spam token detection and short drug-bait pattern detection.
 - Optional profanity term matching via the `PROFANITY_TERMS` variable.
 - Newcomer-burst detection with configurable log/delete action.
-- `/ping`, `/rules`, `/me`, `/report`, `/ban`, and `/unban`.
+- `/ping`, `/rules`, `/me`, `/profile`, `/id`, `/help`, `/report`, `/ban`, and `/unban`.
+- Arabic group entertainment: `/games`, `/quiz`, car trivia (`/cars`), `/rps`, `/truth` (صراحة), `/wyr` (this-or-that), and `/coin` (coin toss).
+- Race-safe game completion: only the first valid quiz answer can claim a round; RPS is restricted to the player who started it.
+- Daily check-ins (`/checkin`) and a per-group reputation leaderboard (`/top`).
+- Member profile cards (`/profile`) with deterministic XP levels, group rank, message totals, and milestone badges; `/id` shows the current group and member IDs, and `/help` lists commands.
+- Private one-to-one whispers (`/whisper @username text`) with an explicit open button and an opened status.
+- Private `/start` registration so users can receive whispers; recipients must start the bot first.
 - Moderator report buttons, audit log output, and optional repeat-spam autoban.
 
 Not yet ported from the Python runtime:
@@ -92,8 +98,12 @@ Set these in the Worker settings or add them to `vars` in `wrangler.jsonc`:
 - `BURST_ENABLED`, `BURST_ACTION`: `log` is the safe default; `delete` is more aggressive.
 - `MEDIA_REP_THRESHOLD`, `LINK_REP_THRESHOLD`, `SINGLE_EMOJI_REP_THRESHOLD`.
 
+Whispers are delivered only to users who have opened the bot and sent `/start`; Telegram does not let a bot initiate a private conversation with an arbitrary username. The opened indicator is recorded when the recipient presses **Open whisper** (the Bot API does not expose message read receipts).
+
 The initial configuration intentionally leaves `MAIN_GROUP_IDS` empty and
 autoban disabled so a fresh deployment cannot moderate an unintended group.
+
+Apply all checked-in migrations, including `0002_social_games_whispers.sql`, `0003_daily_checkins.sql`, and `0004_group_leaderboard.sql`, before deploying the updated Worker. These migrations are additive and do not delete existing data.
 
 ### 4. Deploy the Worker
 
@@ -109,16 +119,21 @@ Check `https://<worker-subdomain>.workers.dev/health`. It should return
 Stop the old polling process first. Telegram cannot deliver updates through
 polling and webhook simultaneously.
 
-Call Telegram's `setWebhook` method with:
+The Worker includes an authenticated setup endpoint. After adding both secrets
+in Cloudflare, run this in Termux (it prompts for the setup secret without
+putting it directly in the shell command history):
 
-- `url`: `https://<worker-subdomain>.workers.dev/telegram/webhook`
-- `secret_token`: exactly the value configured as `TELEGRAM_WEBHOOK_SECRET`
-- `allowed_updates`: `["message","edited_message","callback_query"]`
-- `drop_pending_updates`: `false`
+```bash
+read -rsp "Webhook setup secret: " RONIN_SETUP_KEY; echo
+curl -sS -X POST "https://ronin-telegram-edge.mic3ul-weirdwolf.workers.dev/telegram/setup" \
+  -H "X-Ronin-Setup-Key: ${RONIN_SETUP_KEY}"
+unset RONIN_SETUP_KEY
+```
 
-Verify with Telegram's `getWebhookInfo` method. Add the bot as an administrator
-in each configured group and disable BotFather privacy mode if it must inspect
-ordinary group messages.
+The endpoint registers `/telegram/webhook` with Telegram using the configured
+secret and returns `getWebhookInfo`. It rejects requests without the matching
+setup secret. Add the bot as an administrator in each configured group and
+disable BotFather privacy mode if it must inspect ordinary group messages.
 
 ## Limits and cost
 
