@@ -256,7 +256,7 @@ async function registerPrivateUser(env, user) {
 }
 async function handleWhisper(env, message, text) {
   const target = message.reply_to_message?.from;
-  const m = text.match(/^(?:همسة|\\/whisper(?:@\\w+)?|\\/همسة)\\s+@([A-Za-z0-9_]{5,32})\\s*$/i);
+  const m = text.match(/^(?:همسة|\/whisper(?:@\w+)?|\/همسة)\s+@([A-Za-z0-9_]{5,32})\s*$/i);
   let recipient = target ? { user_id: target.id, first_name: target.first_name } :
     (m ? await env.DB.prepare("SELECT user_id, first_name FROM private_users WHERE username=?").bind(m[1].toLowerCase()).first() : null);
   if (!recipient || target?.is_bot || Number(recipient.user_id) === Number(message.from.id)) {
@@ -322,7 +322,7 @@ async function finishWhisperDraft(env,draft,message) {
   return true;
 }
 async function handlePrivateWhisper(env,message) {
-  const text=(message.text||"").trim(),start=text.match(/^\\/start\\s+w_([a-f0-9]{24})$/i);
+  const text=(message.text||"").trim(),start=text.match(/^\/start\s+w_([a-f0-9]{24})$/i);
   if(start) {
     const draft=await env.DB.prepare("SELECT * FROM whisper_drafts WHERE token=? AND sender_user_id=? AND status='choosing' AND expires_at>CURRENT_TIMESTAMP").bind(start[1],message.from.id).first();
     if(!draft){await sendText(env,message.chat.id,"انتهت صلاحية محرر الهمسة. ابدأ من المجموعة مجدداً.");return true;}
@@ -483,7 +483,7 @@ async function handleCommands(env, message, member) {
     "📅 حضوري": "/حضور", "📜 المساعدة": "/مساعدة", "🆔 معرّفاتي": "/ايدي",
     "📩 همسة": "/whisper_help", "🎵 موسيقى": "/يوت", "📋 القوانين": "/القوانين", "🚨 بلاغ": "/بلاغ"
   };
-  if (/^همسة(?:\\s|$)/i.test(text) || /^\\/whisper(?:@\\w+)?(?:\\s|$)/i.test(text) || /^\\/همسة(?:\\s|$)/i.test(text)) return handleWhisper(env, message, text);
+  if (/^همسة(?:\s|$)/i.test(text) || /^\/whisper(?:@\w+)?(?:\s|$)/i.test(text) || /^\/همسة(?:\s|$)/i.test(text)) return handleWhisper(env, message, text);
   const command = buttonCommands[text] || (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
   const chatId = message.chat.id;
   const rankCommands = {
@@ -522,7 +522,7 @@ async function handleCommands(env, message, member) {
     if(actor<required || actor<=targetLevel) {
       await sendText(env,chatId,"رتبتك لا تسمح بهذا الإجراء على هذا العضو."); return true;
     }
-    const duration=parseModerationDuration(text.split(/\\s+/)[1]);
+    const duration=parseModerationDuration(text.split(/\s+/)[1]);
     const until=Math.floor(Date.now()/1000)+duration;
     try {
       if(action==="ban") await telegram(env,"banChatMember",{chat_id:chatId,user_id:target.id});
