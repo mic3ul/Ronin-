@@ -98,13 +98,23 @@ async function sendCategoryHome(env, chatId) {
 async function searchMusic(env, chatId, query) {
   const clean = String(query || "").trim().slice(0, 100);
   if (!clean) { await sendText(env, chatId, "اكتب اسم الأغنية بعد /يوت. مثال: /يوت Naruto Blue Bird"); return; }
-  const response = await fetch("https://itunes.apple.com/search?term=" + encodeURIComponent(clean) + "&entity=song&limit=6&country=US");
-  if (!response.ok) throw new Error("Music search unavailable");
-  const data = await response.json();
-  const tracks = (data.results || []).filter(track => track.previewUrl && track.trackId);
+  let tracks = [], provider = "apple";
+  try {
+    const response = await fetch("https://itunes.apple.com/search?term=" + encodeURIComponent(clean) + "&entity=song&limit=6&country=US", { headers: { "accept": "application/json" } });
+    if (!response.ok) throw new Error("Apple HTTP " + response.status);
+    const data = await response.json();
+    tracks = (data.results || []).filter(track => track.previewUrl && track.trackId);
+  } catch (error) { console.warn("Apple music provider failed", String(error)); }
+  if (!tracks.length) {
+    provider = "deezer";
+    const response = await fetch("https://api.deezer.com/search?q=" + encodeURIComponent(clean) + "&limit=6", { headers: { "accept": "application/json" } });
+    if (!response.ok) throw new Error("Music providers unavailable (Deezer HTTP " + response.status + ")");
+    const data = await response.json();
+    tracks = (data.data || []).filter(track => track.preview && track.id);
+  }
   if (!tracks.length) { await sendText(env, chatId, "ما لقيت معاينة موسيقية متاحة لهذا البحث. جرّب اسم الأغنية أو الفنان بالإنجليزية."); return; }
-  const rows = tracks.slice(0, 6).map(track => [{ text: (track.trackName + " — " + track.artistName).slice(0, 60), callback_data: "music:" + track.trackId }]);
-  await sendText(env, chatId, "🎵 <b>نتائج البحث عن:</b> " + escapeHtml(clean) + "\nاختر مقطعاً لإرسال معاينة MP3 قصيرة داخل تيليجرام:", { reply_markup: { inline_keyboard: rows } });
+  const rows = tracks.slice(0, 6).map(track => [{ text: (track.title + " — " + (track.artist?.name || track.artistName || "")).slice(0, 60), callback_data: (provider === "apple" ? "music:" : "deezer:") + track.id }]);
+  await sendText(env, chatId, "🎵 <b>نتائج البحث عن:</b> " + escapeHtml(clean) + "\nاختر مقطعاً لفتح معاينة قصيرة:", { reply_markup: { inline_keyboard: rows } });
 }
 async function sendMusicPreview(env, callback, trackId) {
   const response = await fetch("https://itunes.apple.com/lookup?id=" + encodeURIComponent(trackId) + "&country=US");
@@ -344,6 +354,19 @@ async function handleNewCallback(env, callback) {
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح القسم." });
     return true;
   }
+  if (data.startsWith("deezer:")) {
+    const id=data.slice(7);
+    if(!/^\\d{1,15}$/.test(id)){await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"اختيار غير صالح.",show_alert:true});return true;}
+    try {
+      const response=await fetch("https://api.deezer.com/track/"+encodeURIComponent(id));
+      if(!response.ok) throw new Error("Deezer lookup HTTP "+response.status);
+      const track=await response.json();
+      if(!track.preview||!track.link) throw new Error("Preview unavailable");
+      await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"جهزت المعاينة."});
+      await sendText(env,callback.message.chat.id,"🎵 <b>"+escapeHtml(track.title||"مقطع موسيقي")+"</b>\\n"+escapeHtml(track.artist?.name||"")+"\\nمعاينة قصيرة من Deezer.",{reply_markup:{inline_keyboard:[[{text:"▶️ استمع للمعاينة",url:track.preview},{text:"فتح Deezer",url:track.link}]]}});
+    } catch(error){console.error("Deezer preview failed",error);await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"تعذر جلب المعاينة.",show_alert:true});}
+    return true;
+  }
   if (data.startsWith("music:")) {
     const trackId = data.slice(6);
     if (!/^\d{1,15}$/.test(trackId)) {
@@ -487,7 +510,7 @@ async function handleCommands(env, message, member) {
   const command = buttonCommands[text] || (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
   const chatId = message.chat.id;
   const rankCommands = {
-    "/اضف_رفيق":"rafiq", "/اضف_ثائر":"thaer", "/اضف_مجاهد":"mujahid",
+    "/اضف_رفيق":"rafiq", "/رفع_رفيق":"rafiq", "/اضف_ثائر":"thaer", "/اضف_مجاهد":"mujahid",
     "/اضف_مناضل":"munadil", "/اضف_مناصر":"ansar", "/ازالة_رتبة":"member"
   };
   if (Object.prototype.hasOwnProperty.call(rankCommands,command)) {
@@ -528,8 +551,11 @@ async function handleCommands(env, message, member) {
       if(action==="ban") await telegram(env,"banChatMember",{chat_id:chatId,user_id:target.id});
       else if(action==="unban") await telegram(env,"unbanChatMember",{chat_id:chatId,user_id:target.id,only_if_banned:true});
       else {
+        const me=await telegram(env,"getMe",{});
+        const botMember=await telegram(env,"getChatMember",{chat_id:chatId,user_id:me.id});
+        if(!["administrator","creator"].includes(botMember.status) || (botMember.status==="administrator" && !botMember.can_restrict_members)) throw new Error("Ronin lacks can_restrict_members");
         const permissions=action==="mute"
-          ? {can_send_messages:false,can_send_audios:false,can_send_documents:false,can_send_photos:false,can_send_videos:false,can_send_video_notes:false,can_send_voice_notes:false,can_send_polls:false,can_send_other_messages:false,can_add_web_page_previews:false}
+          ? {can_send_messages:false,can_send_audios:false,can_send_documents:false,can_send_photos:false,can_send_videos:false,can_send_video_notes:false,can_send_voice_notes:false,can_send_polls:false,can_send_other_messages:false,can_add_web_page_previews:false,can_manage_topics:false,can_pin_messages:false,can_change_info:false,can_invite_users:false}
           : action==="restrict"
             ? {can_send_messages:true,can_send_audios:false,can_send_documents:false,can_send_photos:false,can_send_videos:false,can_send_video_notes:false,can_send_voice_notes:false,can_send_polls:false,can_send_other_messages:false,can_add_web_page_previews:false}
             : {can_send_messages:true,can_send_audios:true,can_send_documents:true,can_send_photos:true,can_send_videos:true,can_send_video_notes:true,can_send_voice_notes:true,can_send_polls:true,can_send_other_messages:true,can_add_web_page_previews:true};
@@ -719,6 +745,25 @@ async function handleCallback(env, callback) {
   if (action === "report_ban") await telegram(env, "banChatMember", { chat_id: chatId, user_id: userId });
   await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: action === "report_ban" ? "User banned and message deleted." : "Message deleted." });
 }
+async function duplicateFingerprint(message) {
+  const text=getText(message).normalize("NFKC").toLocaleLowerCase().replace(/\\s+/g," ").trim();
+  const media=whisperMedia(message);
+  const mediaKey=media ? String(media[1]) : "";
+  const source=text || mediaKey;
+  if(!source || source.length<2) return null;
+  const bytes=new TextEncoder().encode(source);
+  const digest=await crypto.subtle.digest("SHA-256",bytes);
+  return Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+async function isRepeatedMessage(env,message) {
+  const fingerprint=await duplicateFingerprint(message);
+  if(!fingerprint) return false;
+  const prior=await env.DB.prepare("SELECT message_id FROM duplicate_messages WHERE chat_id=? AND fingerprint=? AND created_at>=datetime('now','-5 minutes')").bind(message.chat.id,fingerprint).first();
+  if(prior) return true;
+  await env.DB.prepare("INSERT INTO duplicate_messages(chat_id,fingerprint,message_id,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(chat_id,fingerprint) DO UPDATE SET message_id=excluded.message_id,created_at=CURRENT_TIMESTAMP").bind(message.chat.id,fingerprint,message.message_id).run();
+  await env.DB.prepare("DELETE FROM duplicate_messages WHERE created_at<datetime('now','-10 minutes')").run();
+  return false;
+}
 async function handleMessage(env, message, edited = false) {
   if (!message || !isGroup(message.chat)) return;
   if (!edited && message.new_chat_members?.length) {
@@ -739,6 +784,11 @@ async function handleMessage(env, message, edited = false) {
   if (!member) return;
   if (!edited && await handleCommands(env, message, member)) return;
   const text = getText(message);
+  if (!edited && !/^\\//.test(text.trim()) && await isRepeatedMessage(env,message).catch(error=>{console.warn("duplicate detection failed",error);return false;})) {
+    await telegram(env,"deleteMessage",{chat_id:message.chat.id,message_id:message.message_id}).catch(error=>console.warn("duplicate delete failed",error));
+    await recordViolation(env.DB,userId,"spam",message.chat.id);
+    return;
+  }
   const reason = getSpamReason(text, env);
   const lowMedia = isMedia(message) && member.reputation_points < Number(env.MEDIA_REP_THRESHOLD || DEFAULTS.media);
   const lowLink = containsLink(message, text) && member.reputation_points < Number(env.LINK_REP_THRESHOLD || DEFAULTS.links);
