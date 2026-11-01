@@ -188,3 +188,99 @@ test("non-admin report callbacks cannot change report state or delete messages",
   assert.equal(DB.report.status, "open");
   assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
 });
+
+
+function createProcessedUpdateDb({ status = "processing", stale = false } = {}) {
+  const row = { status, stale };
+  return {
+    row,
+    prepare(sql) {
+      return {
+        bind() {
+          return {
+            async run() {
+              if (sql.startsWith("INSERT OR IGNORE INTO processed_updates")) {
+                return { meta: { changes: 0 } };
+              }
+              if (sql.includes("SET processed_at = CURRENT_TIMESTAMP")) {
+                const reclaimed = row.status === "processing" && row.stale;
+                if (reclaimed) row.stale = false;
+                return { meta: { changes: reclaimed ? 1 : 0 } };
+              }
+              if (sql.includes("SET status = 'done'")) {
+                row.status = "done";
+                return { meta: { changes: 1 } };
+              }
+              if (sql.startsWith("DELETE FROM processed_updates")) {
+                row.status = null;
+                return { meta: { changes: 1 } };
+              }
+              throw new Error("Unexpected test SQL: " + sql);
+            },
+            async first() {
+              return row.status ? { status: row.status, processed_at: row.stale ? "2000-01-01 00:00:00" : "2099-01-01 00:00:00" } : null;
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+test("webhook reclaims a stale processing update after a previous Worker interruption", async () => {
+  const DB = createProcessedUpdateDb({ status: "processing", stale: true });
+  const response = await worker.fetch(new Request("https://ronin.test/telegram/webhook", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Telegram-Bot-Api-Secret-Token": "webhook-secret",
+    },
+    body: JSON.stringify({ update_id: 42 }),
+  }), {
+    DB,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(DB.row.status, "done");
+});
+
+test("webhook does not steal a fresh processing update", async () => {
+  const DB = createProcessedUpdateDb({ status: "processing", stale: false });
+  const response = await worker.fetch(new Request("https://ronin.test/telegram/webhook", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Telegram-Bot-Api-Secret-Token": "webhook-secret",
+    },
+    body: JSON.stringify({ update_id: 43 }),
+  }), {
+    DB,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(DB.row.status, "processing");
+});
+
+test("webhook acknowledges already completed updates without processing them again", async () => {
+  const DB = createProcessedUpdateDb({ status: "done", stale: false });
+  const response = await worker.fetch(new Request("https://ronin.test/telegram/webhook", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Telegram-Bot-Api-Secret-Token": "webhook-secret",
+    },
+    body: JSON.stringify({ update_id: 44 }),
+  }), {
+    DB,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, duplicate: true });
+  assert.equal(DB.row.status, "done");
+});
