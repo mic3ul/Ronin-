@@ -1,0 +1,30 @@
+name: Python checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "feature/**"]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install "yt-dlp>=2025.1.15" "aiohttp>=3.9.0" pytest pytest-asyncio ruff
+      - name: Run focused Python tests
+        run: python -m pytest -q tests/test_youtube.py tests/test_webhook_health.py
+      - name: Run Cloudflare Worker tests
+        run: node --test cloudflare/worker/test/index.test.js
+      - name: Lint changed Python modules
+        run: python -m ruff check handlers/youtube.py services/youtube_search.py tests/test_youtube.py tests/test_webhook_health.py webhook.py services/healthcheck.py
+      - name: Compile Python files
+        run: python -m compileall -q .

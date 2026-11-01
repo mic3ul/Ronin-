@@ -233,6 +233,8 @@ docker run -d --name samurai-bot \
 
 The data volume preserves the SQLite database and announcement timestamps across container replacement. Port `8080` is only needed when `[healthcheck].enabled = true`.
 
+The Docker build context excludes local `.env` files and database files. Pass `BOT_TOKEN` at runtime with `--env-file` or a platform secret; never put a real token in `config.toml` or bake it into the image.
+
 ### Health checks (heartbeat)
 
 When enabled in `config.toml`, the HTTP server exposes:
@@ -322,6 +324,17 @@ All behavior settings are available in `config.toml`, including spam thresholds,
 
 Commands registered with both prefixes can also be used with `/` instead of `!`.
 
+## YouTube search
+
+Search for songs, music, and videos directly from a group or private chat:
+
+- `/yt <search terms>`
+- `/youtube <search terms>`
+- `/يوت <اسم الأغنية>`
+- `/يوتيوب <اسم الفيديو>`
+
+The bot returns up to five matching YouTube results with title, channel, duration, and direct links. This feature is metadata-only: Ronin does not download, copy, or re-host YouTube media.
+
 ## External Libraries
 
 The bot uses two external libraries in the `libs/` folder:
@@ -339,3 +352,41 @@ https://huggingface.co/prithivMLmods/siglip2-x256-explicit-content - Our current
 ## Author of Samurai
 
 (C) 2026 Abraham Tugalov
+
+
+## Cloudflare-native runtime
+
+Ronin includes a native Cloudflare Workers runtime backed by D1. It handles
+Telegram webhook updates directly through the Telegram Bot API and persists
+member reputation, moderation counters, reports, and update deduplication in
+D1. It does not need a Python origin, Docker container, or Workers Paid plan.
+
+The native Worker currently covers core moderation (low-reputation links,
+media and single-emoji restrictions, known spam patterns, short drug-bait
+detection), reputation tracking, newcomer-burst detection, reports, and
+basic moderation commands. The original Python/aiogram runtime remains
+available for self-hosting and retains additional capabilities that have not
+yet been ported: PyTorch/Transformers spam and NSFW models, full Censure/Fluent
+localization, gender/profile-photo checks, retrospective message cleanup,
+reactions, scheduled announcements, and some legacy commands.
+
+See [cloudflare/worker/README.md](cloudflare/worker/README.md) for the Cloudflare
+setup. The D1 database is bound in Wrangler configuration. Configure
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` as Worker secrets, then set
+`MAIN_GROUP_IDS`, report/log destinations, and moderation thresholds as
+non-secret Worker variables. Apply the D1 migration before deploying.
+
+The deployment does not automatically register Telegram's webhook. Configure
+and test the Worker first, then stop the polling instance and register the
+webhook. Do not run polling and webhook delivery simultaneously for the same
+bot. The Cloudflare implementation is a staged native port, not yet feature-
+identical to the full Python runtime.
+
+
+### Runtime separation
+
+The Docker `RUN_MODE=webhook` option starts the Python/aiogram webhook server.
+Its `TELEGRAM_WEBHOOK_URL` must be a public HTTPS address routed to that
+Python service. It must not point at the native Cloudflare Worker: the Worker
+processes Telegram updates itself and does not proxy them to Python. For the
+Workers + D1 deployment, follow [cloudflare/worker/README.md](cloudflare/worker/README.md).
