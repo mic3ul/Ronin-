@@ -159,23 +159,86 @@ async function handleCommands(env, message, member) {
   }
   return false;
 }
-async function handleCallback(env, callback) {
+export async function handleCallback(env, callback) {
   const parts = (callback.data || "").split("|");
   const action = parts[0];
-  if (action === "report_dismiss") {
-    const authorized = await isChatAdmin(env, callback.message.chat.id, callback.from.id).catch(() => false);
-    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: authorized ? "تم تجاهل البلاغ." : "هذه العملية للمشرفين فقط.", show_alert: !authorized });
+  if (!["report_del", "report_ban", "report_dismiss"].includes(action)) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "إجراء غير معروف." });
     return;
   }
-  if (!["report_del", "report_ban"].includes(action)) { await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "إجراء غير معروف." }); return; }
-  const chatId = Number(parts[1]), messageId = Number(parts[2]), userId = Number(parts[3]);
-  const authorized = await isChatAdmin(env, callback.message.chat.id, callback.from.id).catch(() => false);
-  if (![chatId, messageId, userId].every(Number.isSafeInteger) || !authorized) {
-    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "هذه العملية للمشرفين فقط.", show_alert: true }); return;
+
+  const reportChatId = callback.message && callback.message.chat && Number(callback.message.chat.id);
+  const reportMessageId = callback.message && Number(callback.message.message_id);
+  const actorId = callback.from && Number(callback.from.id);
+  if (![reportChatId, reportMessageId, actorId].every(Number.isSafeInteger)) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "بيانات البلاغ غير صالحة.", show_alert: true });
+    return;
   }
-  await telegram(env, "deleteMessage", { chat_id: chatId, message_id: messageId }).catch(() => null);
-  if (action === "report_ban") await telegram(env, "banChatMember", { chat_id: chatId, user_id: userId });
-  await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: action === "report_ban" ? "تم حظر العضو وحذف رسالته." : "تم حذف الرسالة." });
+
+  const authorized = await isChatAdmin(env, reportChatId, actorId).catch(() => false);
+  if (!authorized) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "هذه العملية للمشرفين فقط.", show_alert: true });
+    return;
+  }
+
+  if (action === "report_dismiss") {
+    const result = await env.DB.prepare(
+      "UPDATE reports SET status = 'dismissed' WHERE report_chat_id = ? AND report_message_id = ? AND status = 'open'"
+    ).bind(reportChatId, reportMessageId).run();
+    const updated = Number(result.meta && result.meta.changes || 0) === 1;
+    await telegram(env, "answerCallbackQuery", {
+      callback_query_id: callback.id,
+      text: updated ? "تم تجاهل البلاغ." : "تمت معالجة البلاغ مسبقاً أو لم يعد متاحاً.",
+      show_alert: !updated,
+    });
+    return;
+  }
+
+  const chatId = Number(parts[1]);
+  const messageId = Number(parts[2]);
+  const userId = Number(parts[3]);
+  if (![chatId, messageId, userId].every(Number.isSafeInteger)) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "بيانات البلاغ غير صالحة.", show_alert: true });
+    return;
+  }
+
+  // Claim the exact stored report before acting. This prevents stale or repeated
+  // callback buttons from moderating a different message or applying twice.
+  const claimed = await env.DB.prepare(
+    "UPDATE reports SET status = 'processing' WHERE report_chat_id = ? AND report_message_id = ? AND source_chat_id = ? AND source_message_id = ? AND reported_user_id = ? AND status = 'open'"
+  ).bind(reportChatId, reportMessageId, chatId, messageId, userId).run();
+  if (Number(claimed.meta && claimed.meta.changes || 0) !== 1) {
+    await telegram(env, "answerCallbackQuery", {
+      callback_query_id: callback.id,
+      text: "تمت معالجة البلاغ مسبقاً أو لم يعد متاحاً.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  try {
+    if (action === "report_ban") {
+      await telegram(env, "banChatMember", { chat_id: chatId, user_id: userId });
+    }
+    await telegram(env, "deleteMessage", { chat_id: chatId, message_id: messageId });
+    await env.DB.prepare(
+      "UPDATE reports SET status = ? WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
+    ).bind(action === "report_ban" ? "banned" : "resolved", reportChatId, reportMessageId).run();
+    await telegram(env, "answerCallbackQuery", {
+      callback_query_id: callback.id,
+      text: action === "report_ban" ? "تم حظر العضو وحذف رسالته." : "تم حذف الرسالة.",
+    });
+  } catch (error) {
+    await env.DB.prepare(
+      "UPDATE reports SET status = 'open' WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
+    ).bind(reportChatId, reportMessageId).run().catch(() => null);
+    await telegram(env, "answerCallbackQuery", {
+      callback_query_id: callback.id,
+      text: "تعذر تنفيذ الإجراء. تحقق من صلاحيات البوت وحاول مجدداً.",
+      show_alert: true,
+    }).catch(() => null);
+    console.error("Ronin report action failed", error);
+  }
 }
 async function handleMessage(env, message, edited = false) {
   if (!message || !message.from || message.from.is_bot || !isGroup(message.chat)) return;
