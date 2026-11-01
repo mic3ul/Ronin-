@@ -291,9 +291,15 @@ export default {
     try {
       const inserted = await env.DB.prepare("INSERT OR IGNORE INTO processed_updates (update_id, status) VALUES (?, 'processing')").bind(update.update_id).run();
       if (inserted.meta && inserted.meta.changes === 0) {
-        const prior = await env.DB.prepare("SELECT status FROM processed_updates WHERE update_id = ?").bind(update.update_id).first();
+        const prior = await env.DB.prepare("SELECT status, processed_at FROM processed_updates WHERE update_id = ?").bind(update.update_id).first();
         if (prior && prior.status === "done") return json({ ok: true, duplicate: true });
-        return json({ error: "update_in_progress" }, 503);
+
+        // Recover a processing lease left behind if a Worker execution was
+        // terminated before it could mark the update done or remove its row.
+        const reclaimed = await env.DB.prepare(
+          "UPDATE processed_updates SET processed_at = CURRENT_TIMESTAMP WHERE update_id = ? AND status = 'processing' AND processed_at < datetime('now', '-5 minutes')"
+        ).bind(update.update_id).run();
+        if (!reclaimed.meta || reclaimed.meta.changes !== 1) return json({ error: "update_in_progress" }, 503);
       }
       await processUpdate(update, env);
       await env.DB.prepare("UPDATE processed_updates SET status = 'done', processed_at = CURRENT_TIMESTAMP WHERE update_id = ?").bind(update.update_id).run();
