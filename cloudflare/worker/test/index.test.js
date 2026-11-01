@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { escapeHtml, isDrugSpam, normalizeCommand, safeEqual } from "../src/index.js";
+import worker, { escapeHtml, handleCallback, isDrugSpam, normalizeCommand, safeEqual } from "../src/index.js";
 
 test("webhook secret comparison rejects wrong values", () => {
   assert.equal(safeEqual("secret_123", "secret_123"), true);
@@ -50,4 +50,141 @@ test("Arabic moderation command aliases normalize to supported commands", () => 
   assert.equal(normalizeCommand("/حظر"), "/ban");
   assert.equal(normalizeCommand("/فك_الحظر"), "/unban");
   assert.equal(normalizeCommand("/custom@RoninBot"), "/custom");
+});
+
+
+function createFakeReportDb() {
+  const report = {
+    report_chat_id: -200,
+    report_message_id: 900,
+    source_chat_id: -100,
+    source_message_id: 55,
+    reported_user_id: 42,
+    status: "open",
+  };
+  return {
+    report,
+    prepare(sql) {
+      return {
+        bind(...values) {
+          return {
+            async run() {
+              if (sql.includes("SET status = 'dismissed'")) {
+                const matches = report.status === "open"
+                  && report.report_chat_id === values[0]
+                  && report.report_message_id === values[1];
+                if (matches) report.status = "dismissed";
+                return { meta: { changes: matches ? 1 : 0 } };
+              }
+              if (sql.includes("SET status = 'processing'")) {
+                const matches = report.status === "open"
+                  && report.report_chat_id === values[0]
+                  && report.report_message_id === values[1]
+                  && report.source_chat_id === values[2]
+                  && report.source_message_id === values[3]
+                  && report.reported_user_id === values[4];
+                if (matches) report.status = "processing";
+                return { meta: { changes: matches ? 1 : 0 } };
+              }
+              if (sql.includes("SET status = 'open'")) {
+                if (report.status === "processing") report.status = "open";
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("SET status = ?")) {
+                const matches = report.status === "processing"
+                  && report.report_chat_id === values[1]
+                  && report.report_message_id === values[2];
+                if (matches) report.status = values[0];
+                return { meta: { changes: matches ? 1 : 0 } };
+              }
+              throw new Error("Unexpected test SQL: " + sql);
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+function mockTelegramApi(t, memberStatus = "administrator") {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    const result = method === "getChatMember" ? { status: memberStatus } : true;
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  return calls;
+}
+
+test("report moderation callback is bound to its stored report and cannot be replayed", async (t) => {
+  const calls = mockTelegramApi(t);
+  const DB = createFakeReportDb();
+  const env = { DB, TELEGRAM_BOT_TOKEN: "test-token" };
+  const callback = {
+    id: "callback-1",
+    data: "report_del|-100|55|42",
+    from: { id: 77 },
+    message: { chat: { id: -200 }, message_id: 900 },
+  };
+
+  await handleCallback(env, callback);
+  assert.equal(DB.report.status, "resolved");
+  assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
+
+  await handleCallback(env, callback);
+  assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
+  assert.equal(calls.filter((call) => call.method === "answerCallbackQuery").length, 2);
+});
+
+test("report callback cannot act on source-message data that differs from the stored report", async (t) => {
+  const calls = mockTelegramApi(t);
+  const DB = createFakeReportDb();
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, {
+    id: "callback-2",
+    data: "report_ban|-101|55|42",
+    from: { id: 77 },
+    message: { chat: { id: -200 }, message_id: 900 },
+  });
+
+  assert.equal(DB.report.status, "open");
+  assert.equal(calls.some((call) => call.method === "banChatMember"), false);
+  assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
+});
+
+test("report dismiss button records a single-use dismissed status", async (t) => {
+  const calls = mockTelegramApi(t);
+  const DB = createFakeReportDb();
+  const callback = {
+    id: "callback-3",
+    data: "report_dismiss",
+    from: { id: 77 },
+    message: { chat: { id: -200 }, message_id: 900 },
+  };
+
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, callback);
+  assert.equal(DB.report.status, "dismissed");
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, callback);
+  assert.equal(DB.report.status, "dismissed");
+  assert.equal(calls.filter((call) => call.method === "answerCallbackQuery").length, 2);
+});
+
+test("non-admin report callbacks cannot change report state or delete messages", async (t) => {
+  const calls = mockTelegramApi(t, "member");
+  const DB = createFakeReportDb();
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, {
+    id: "callback-4",
+    data: "report_del|-100|55|42",
+    from: { id: 88 },
+    message: { chat: { id: -200 }, message_id: 900 },
+  });
+
+  assert.equal(DB.report.status, "open");
+  assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
 });
