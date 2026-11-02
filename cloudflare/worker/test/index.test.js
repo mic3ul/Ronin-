@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { escapeHtml, handleCallback, isDrugSpam, normalizeCommand, safeEqual } from "../src/index.js";
+import worker, { duplicateFingerprint, escapeHtml, handleCallback, isDrugSpam, isRepeatedMessage, normalizeCommand, safeEqual } from "../src/index.js";
 
 test("webhook secret comparison rejects wrong values", () => {
   assert.equal(safeEqual("secret_123", "secret_123"), true);
@@ -283,4 +283,68 @@ test("webhook acknowledges already completed updates without processing them aga
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, duplicate: true });
   assert.equal(DB.row.status, "done");
+});
+
+
+test("duplicate fingerprints normalize text, ignore commands, and hash media identity", async () => {
+  const first = await duplicateFingerprint({ text: "  Hello   WORLD " });
+  const normalized = await duplicateFingerprint({ text: "hello world" });
+  assert.equal(first, normalized);
+  assert.equal(await duplicateFingerprint({ text: "/ping" }), null);
+  assert.equal(await duplicateFingerprint({ text: "!rules" }), null);
+
+  const photoA = await duplicateFingerprint({
+    photo: [{ file_unique_id: "small-id" }, { file_unique_id: "large-id" }],
+    caption: "first caption",
+  });
+  const photoB = await duplicateFingerprint({
+    photo: [{ file_unique_id: "small-id" }, { file_unique_id: "large-id" }],
+    caption: "different caption",
+  });
+  assert.equal(photoA, photoB);
+});
+
+function createDuplicateDb() {
+  const entries = new Map();
+  return {
+    entries,
+    prepare(sql) {
+      return {
+        bind(...values) {
+          return {
+            async run() {
+              if (sql.startsWith("DELETE FROM duplicate_messages")) return { meta: { changes: 0 } };
+              if (sql.startsWith("INSERT INTO duplicate_messages")) {
+                const [chatId, fingerprint, messageId] = values;
+                const key = String(chatId) + ":" + fingerprint;
+                if (entries.has(key)) return { meta: { changes: 0 } };
+                entries.set(key, { messageId });
+                return { meta: { changes: 1 } };
+              }
+              throw new Error("Unexpected duplicate-test SQL: " + sql);
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+test("duplicate detection is scoped to each group and flags the second matching message", async () => {
+  const DB = createDuplicateDb();
+  const message = { chat: { id: -1001 }, message_id: 10, text: "same message" };
+
+  assert.equal(await isRepeatedMessage(DB, message), false);
+  assert.equal(await isRepeatedMessage(DB, { ...message, message_id: 11 }), true);
+  assert.equal(await isRepeatedMessage(DB, {
+    ...message,
+    chat: { id: -1002 },
+    message_id: 12,
+  }), false);
+});
+
+test("duplicate detection does not register messages without usable content", async () => {
+  const DB = createDuplicateDb();
+  assert.equal(await isRepeatedMessage(DB, { chat: { id: -1001 }, message_id: 1 }), false);
+  assert.equal(DB.entries.size, 0);
 });

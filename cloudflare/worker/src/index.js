@@ -48,6 +48,60 @@ function parseIds(value) {
 function isGroup(chat) { return chat && (chat.type === "group" || chat.type === "supergroup"); }
 function getText(message) { return message.text || message.caption || ""; }
 function isMedia(message) { return ["photo", "video", "document", "audio", "voice", "video_note", "animation", "sticker"].some((key) => Boolean(message[key])); }
+const DUPLICATE_WINDOW_SECONDS = 300;
+const DUPLICATE_RETENTION_DAYS = 1;
+
+export async function duplicateFingerprint(message) {
+  if (!message) return null;
+  const normalizedText = String(getText(message) || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\u200B-\u200F\uFEFF]/g, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  // Commands must remain repeatable; duplicate moderation applies to ordinary content.
+  if (/^[\/!]\S+/.test(normalizedText)) return null;
+
+  let source = "";
+  for (const key of ["photo", "video", "document", "audio", "voice", "video_note", "animation", "sticker"]) {
+    const value = message[key];
+    const item = Array.isArray(value) ? value[value.length - 1] : value;
+    if (item && item.file_unique_id) {
+      source = "media:" + key + ":" + item.file_unique_id;
+      break;
+    }
+  }
+  if (!source && normalizedText) source = "text:" + normalizedText;
+  if (!source) return null;
+
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function isRepeatedMessage(db, message) {
+  const chatId = Number(message && message.chat && message.chat.id);
+  const messageId = Number(message && message.message_id);
+  if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(messageId)) return false;
+
+  const fingerprint = await duplicateFingerprint(message);
+  if (!fingerprint) return false;
+
+  // Prune old fingerprints periodically instead of adding a cleanup write per message.
+  if (messageId % 100 === 0) {
+    await db.prepare(
+      "DELETE FROM duplicate_messages WHERE chat_id = ? AND created_at < datetime('now', '-" + DUPLICATE_RETENTION_DAYS + " day')"
+    ).bind(chatId).run();
+  }
+
+  // A single conditional UPSERT makes the first message the anchor and safely
+  // rejects concurrent repeats until the five-minute window has elapsed.
+  const result = await db.prepare(
+    "INSERT INTO duplicate_messages (chat_id, fingerprint, message_id, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) " +
+    "ON CONFLICT(chat_id, fingerprint) DO UPDATE SET message_id = excluded.message_id, created_at = CURRENT_TIMESTAMP " +
+    "WHERE duplicate_messages.created_at < datetime('now', '-" + DUPLICATE_WINDOW_SECONDS + " seconds')"
+  ).bind(chatId, fingerprint, messageId).run();
+  return Number(result.meta && result.meta.changes || 0) === 0;
+}
 function containsLink(message, text) {
   const entities = (message.entities || []).concat(message.caption_entities || []);
   return entities.some((item) => item.type === "url" || item.type === "text_link") || /(?:https?:\/\/|www\.|t\.me\/|telegram\.me\/)/i.test(text);
@@ -249,6 +303,18 @@ async function handleMessage(env, message, edited = false) {
   if (!member) return;
   if (!edited && await handleCommands(env, message, member)) return;
   const text = getText(message);
+  if (!edited && await isRepeatedMessage(env.DB, message)) {
+    if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) {
+      await recordClean(env.DB, userId);
+      return;
+    }
+    await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id }).catch(() => null);
+    await recordViolation(env.DB, userId, "spam");
+    member = await getMember(env.DB, userId);
+    await logModeration(env, message.chat, message.from, "repeated message", text).catch(() => null);
+    if (member) await maybeAutoBan(env, message.chat.id, userId, member).catch(() => null);
+    return;
+  }
   const reason = getSpamReason(text, env);
   const lowMedia = isMedia(message) && member.reputation_points < Number(env.MEDIA_REP_THRESHOLD || DEFAULTS.media);
   const lowLink = containsLink(message, text) && member.reputation_points < Number(env.LINK_REP_THRESHOLD || DEFAULTS.links);
