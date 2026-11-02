@@ -25,6 +25,7 @@ Implemented in this first native port:
 
 - Telegram webhook authentication and payload size validation.
 - Retry-safe update deduplication in D1.
+- Per-group duplicate text/media detection with SHA-256 fingerprints; repeated content within five minutes is removed, while command invocations are excluded.
 - Main-group allowlist.
 - Member message counts and reputation persistence.
 - Low-reputation link, media, and single-emoji restrictions.
@@ -134,6 +135,7 @@ Workers AI is not required by this runtime and no paid AI model is invoked.
 - The Worker rejects requests without the Telegram webhook secret.
 - Update IDs are persisted in D1. Failed updates are removed from the
   processing table so Telegram can retry; completed updates are deduplicated.
+- Duplicate detection stores SHA-256 fingerprints rather than raw message text or media files; old fingerprints are pruned periodically.
 - Automatic bans are disabled by default.
 - Only group IDs explicitly listed in `MAIN_GROUP_IDS` are moderated.
 - No webhook is registered automatically by deployment. Register it only
