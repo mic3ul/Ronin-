@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { duplicateFingerprint, escapeHtml, handleCallback, isDrugSpam, isRepeatedMessage, normalizeCommand, safeEqual } from "../src/index.js";
+import worker, { deleteRepeatedMessage, duplicateFingerprint, escapeHtml, handleCallback, isDrugSpam, isRepeatedMessage, normalizeCommand, safeEqual } from "../src/index.js";
 
 test("webhook secret comparison rejects wrong values", () => {
   assert.equal(safeEqual("secret_123", "secret_123"), true);
@@ -347,4 +347,54 @@ test("duplicate detection does not register messages without usable content", as
   const DB = createDuplicateDb();
   assert.equal(await isRepeatedMessage(DB, { chat: { id: -1001 }, message_id: 1 }), false);
   assert.equal(DB.entries.size, 0);
+});
+
+
+test("failed Telegram deletion does not count as a successful duplicate moderation action", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    ok: false,
+    description: "not enough rights to delete messages",
+  }), {
+    status: 403,
+    headers: { "content-type": "application/json" },
+  });
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const deleted = await deleteRepeatedMessage({
+    TELEGRAM_BOT_TOKEN: "test-token",
+  }, {
+    chat: { id: -100123, title: "Test group" },
+    from: { id: 456, first_name: "Member" },
+    message_id: 789,
+    text: "repeated content",
+  });
+
+  assert.equal(deleted, false);
+});
+
+test("duplicate moderation proceeds only after Telegram confirms deletion", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ method: String(url).split("/").pop(), payload: JSON.parse(options.body || "{}") });
+    return new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const deleted = await deleteRepeatedMessage({
+    TELEGRAM_BOT_TOKEN: "test-token",
+  }, {
+    chat: { id: -100123, title: "Test group" },
+    from: { id: 456, first_name: "Member" },
+    message_id: 790,
+    text: "repeated content",
+  });
+
+  assert.equal(deleted, true);
+  assert.deepEqual(calls.map((call) => call.method), ["deleteMessage"]);
+  assert.deepEqual(calls[0].payload, { chat_id: -100123, message_id: 790 });
 });
