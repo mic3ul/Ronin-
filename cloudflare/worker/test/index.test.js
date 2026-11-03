@@ -398,3 +398,24 @@ test("duplicate moderation proceeds only after Telegram confirms deletion", asyn
   assert.deepEqual(calls.map((call) => call.method), ["deleteMessage"]);
   assert.deepEqual(calls[0].payload, { chat_id: -100123, message_id: 790 });
 });
+
+
+test("a false Telegram deleteMessage result is not treated as deletion", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true, result: false }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const deleted = await deleteRepeatedMessage({
+    TELEGRAM_BOT_TOKEN: "test-token",
+  }, {
+    chat: { id: -100123, title: "Test group" },
+    from: { id: 456, first_name: "Member" },
+    message_id: 791,
+    text: "repeated content",
+  });
+
+  assert.equal(deleted, false);
+});
