@@ -154,6 +154,26 @@ async function logModeration(env, chat, user, reason, text) {
   const name = escapeHtml([user.first_name, user.last_name].filter(Boolean).join(" ").slice(0, 80));
   await sendText(env, env.LOGS_CHAT_ID, "<b>إجراء إشرافي من Ronin</b>\nالسبب: " + reason + "\nالمجموعة: " + escapeHtml(chat.title || chat.id) + "\nUser: " + name + " (<code>" + user.id + "</code>)\n<code>" + excerpt + "</code>");
 }
+export async function deleteRepeatedMessage(env, message) {
+  try {
+    await telegram(env, "deleteMessage", {
+      chat_id: message.chat.id,
+      message_id: message.message_id,
+    });
+    return true;
+  } catch (error) {
+    console.warn("Ronin could not delete a repeated message", error);
+    await logModeration(
+      env,
+      message.chat,
+      message.from,
+      "failed to delete repeated message",
+      getText(message),
+    ).catch(() => null);
+    return false;
+  }
+}
+
 async function maybeAutoBan(env, chatId, userId, member) {
   if (env.AUTOBAN_ENABLED !== "true") return;
   const count = Number(env.AUTOBAN_THRESHOLD || DEFAULTS.autoban);
@@ -308,7 +328,8 @@ async function handleMessage(env, message, edited = false) {
       await recordClean(env.DB, userId);
       return;
     }
-    await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id }).catch(() => null);
+    // Do not penalize or autoban a member when Telegram did not confirm deletion.
+    if (!await deleteRepeatedMessage(env, message)) return;
     await recordViolation(env.DB, userId, "spam");
     member = await getMember(env.DB, userId);
     await logModeration(env, message.chat, message.from, "repeated message", text).catch(() => null);
