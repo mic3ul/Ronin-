@@ -431,5 +431,5 @@ test("final duplicate index migration removes legacy indexes and keeps the chat-
   assert.match(sql, /DROP INDEX IF EXISTS idx_duplicate_messages_created;/);
   assert.match(sql, /DROP INDEX IF EXISTS idx_duplicate_messages_created_at;/);
   assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_duplicate_messages_chat_time/);
-  assert.match(sql, /ON duplicate_messages\\(chat_id, created_at\\)/);
+  assert.ok(sql.includes("ON duplicate_messages(chat_id, created_at)"));
 });
