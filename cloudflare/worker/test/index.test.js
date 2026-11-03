@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import worker, { deleteRepeatedMessage, duplicateFingerprint, escapeHtml, handleCallback, isDrugSpam, isRepeatedMessage, normalizeCommand, safeEqual } from "../src/index.js";
 
 test("webhook secret comparison rejects wrong values", () => {
@@ -418,4 +419,17 @@ test("a false Telegram deleteMessage result is not treated as deletion", async (
   });
 
   assert.equal(deleted, false);
+});
+
+
+test("final duplicate index migration removes legacy indexes and keeps the chat-time index", () => {
+  const sql = readFileSync(
+    new URL("../migrations/0008_duplicate_index_cleanup.sql", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(sql, /DROP INDEX IF EXISTS idx_duplicate_messages_created;/);
+  assert.match(sql, /DROP INDEX IF EXISTS idx_duplicate_messages_created_at;/);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_duplicate_messages_chat_time/);
+  assert.match(sql, /ON duplicate_messages\\(chat_id, created_at\\)/);
 });
