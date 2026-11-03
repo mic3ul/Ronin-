@@ -156,10 +156,11 @@ async function logModeration(env, chat, user, reason, text) {
 }
 export async function deleteRepeatedMessage(env, message) {
   try {
-    await telegram(env, "deleteMessage", {
+    const deleted = await telegram(env, "deleteMessage", {
       chat_id: message.chat.id,
       message_id: message.message_id,
     });
+    if (deleted !== true) throw new Error("Telegram did not confirm message deletion");
     return true;
   } catch (error) {
     console.warn("Ronin could not delete a repeated message", error);
