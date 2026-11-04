@@ -107,7 +107,7 @@ export function normalizeMusicTracks(data, provider) {
     const id = String(provider === "apple" ? track?.trackId ?? "" : track?.id ?? "");
     const preview = provider === "apple" ? track?.previewUrl : track?.preview;
     const page = provider === "apple" ? track?.trackViewUrl : track?.link;
-    if (!/^\\d{1,15}$/.test(id) || !preview || !page) return [];
+    if (!/^\d{1,15}$/.test(id) || !preview || !page) return [];
     return [{
       id,
       title: String(provider === "apple" ? track.trackName || "مقطع موسيقي" : track.title || "مقطع موسيقي"),
@@ -123,7 +123,7 @@ export function buildMusicKeyboardRows(tracks, provider) {
   if (!prefix || !Array.isArray(tracks)) return [];
   return tracks.slice(0, 6).flatMap((track) => {
     const id = String(track?.id ?? "");
-    if (!/^\\d{1,15}$/.test(id)) return [];
+    if (!/^\d{1,15}$/.test(id)) return [];
     const title = String(track.title || "مقطع موسيقي");
     const artist = String(track.artist || "");
     return [{ text: (title + (artist ? " — " + artist : "")).slice(0, 60), callback_data: prefix + id }];
