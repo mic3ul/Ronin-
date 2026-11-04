@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildMusicKeyboardRows, getProfileLevel, handleCallback, isDrugSpam, normalizeMusicTracks, safeEqual } from "../src/index.js";
+import worker, { buildMusicKeyboardRows, duplicateFingerprint, getProfileLevel, handleCallback, isDrugSpam, normalizeMusicTracks, safeEqual } from "../src/index.js";
 
 test("webhook secret comparison rejects wrong values", () => {
   assert.equal(safeEqual("secret_123", "secret_123"), true);
@@ -228,3 +228,12 @@ test("report dismissal is stored and cannot be repeated", async (t) => {
   assert.equal(calls.filter((call) => call.method === "answerCallbackQuery").length, 2);
 });
 
+
+test("duplicate fingerprints ignore slash and bang commands", async () => {
+  assert.equal(await duplicateFingerprint({ text: "/help" }), null);
+  assert.equal(await duplicateFingerprint({ text: "!help" }), null);
+  assert.equal(
+    await duplicateFingerprint({ text: "  ordinary   repeated text " }),
+    await duplicateFingerprint({ text: "ordinary repeated text" }),
+  );
+});
