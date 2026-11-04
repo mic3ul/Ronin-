@@ -57,6 +57,11 @@ async function telegram(env, method, payload) {
   if (!response.ok || data.ok === false) throw new Error("Telegram " + method + " failed: " + (data.description || response.status));
   return data.result;
 }
+async function telegramConfirmed(env, method, payload) {
+  const result = await telegram(env, method, payload);
+  if (result !== true) throw new Error("Telegram " + method + " did not confirm the action");
+  return true;
+}
 const RONIN_KEYBOARD = {
   keyboard: [
     [{ text: "🎮 الألعاب" }, { text: "👤 ملفي" }, { text: "🏆 المتصدرون" }],
@@ -95,6 +100,36 @@ async function sendCategoryHome(env, chatId) {
     ] }
   });
 }
+export function normalizeMusicTracks(data, provider) {
+  const entries = provider === "apple" ? data?.results : provider === "deezer" ? data?.data : null;
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((track) => {
+    const id = String(provider === "apple" ? track?.trackId ?? "" : track?.id ?? "");
+    const preview = provider === "apple" ? track?.previewUrl : track?.preview;
+    const page = provider === "apple" ? track?.trackViewUrl : track?.link;
+    if (!/^\\d{1,15}$/.test(id) || !preview || !page) return [];
+    return [{
+      id,
+      title: String(provider === "apple" ? track.trackName || "مقطع موسيقي" : track.title || "مقطع موسيقي"),
+      artist: String(provider === "apple" ? track.artistName || "" : track.artist?.name || ""),
+      preview: String(preview),
+      page: String(page),
+    }];
+  });
+}
+
+export function buildMusicKeyboardRows(tracks, provider) {
+  const prefix = provider === "apple" ? "music:" : provider === "deezer" ? "deezer:" : null;
+  if (!prefix || !Array.isArray(tracks)) return [];
+  return tracks.slice(0, 6).flatMap((track) => {
+    const id = String(track?.id ?? "");
+    if (!/^\\d{1,15}$/.test(id)) return [];
+    const title = String(track.title || "مقطع موسيقي");
+    const artist = String(track.artist || "");
+    return [{ text: (title + (artist ? " — " + artist : "")).slice(0, 60), callback_data: prefix + id }];
+  }).map((button) => [button]);
+}
+
 async function searchMusic(env, chatId, query) {
   const clean = String(query || "").trim().slice(0, 100);
   if (!clean) { await sendText(env, chatId, "اكتب اسم الأغنية بعد /يوت. مثال: /يوت Naruto Blue Bird"); return; }
@@ -103,9 +138,7 @@ async function searchMusic(env, chatId, query) {
     const response = await fetch("https://itunes.apple.com/search?term=" + encodeURIComponent(clean) + "&entity=song&limit=6&country=US", { headers: { "accept": "application/json" }, signal: AbortSignal.timeout(9000) });
     if (!response.ok) throw new Error("Apple HTTP " + response.status);
     const data = await response.json();
-    tracks = (data.results || []).filter(t => t.previewUrl && t.trackId).map(t => ({
-      id: String(t.trackId), title: t.trackName || "مقطع موسيقي", artist: t.artistName || "", preview: t.previewUrl, page: t.trackViewUrl
-    }));
+    tracks = normalizeMusicTracks(data, "apple");
   } catch (error) { failures.push("Apple: " + String(error?.message || error)); }
   if (!tracks.length) {
     provider = "deezer";
@@ -113,14 +146,12 @@ async function searchMusic(env, chatId, query) {
       const response = await fetch("https://api.deezer.com/search?q=" + encodeURIComponent(clean) + "&limit=6", { headers: { "accept": "application/json" }, signal: AbortSignal.timeout(9000) });
       if (!response.ok) throw new Error("Deezer HTTP " + response.status);
       const data = await response.json();
-      tracks = (data.data || []).filter(t => t.preview && t.id).map(t => ({
-        id: String(t.id), title: t.title || "مقطع موسيقي", artist: t.artist?.name || "", preview: t.preview, page: t.link
-      }));
+      tracks = normalizeMusicTracks(data, "deezer");
     } catch (error) { failures.push("Deezer: " + String(error?.message || error)); }
   }
   if (!tracks.length && failures.length) throw new Error(failures.join(" | "));
   if (!tracks.length) { await sendText(env, chatId, "ما لقيت معاينة موسيقية متاحة لهذا البحث. جرّب اسم الأغنية أو الفنان بالإنجليزية."); return; }
-  const rows = tracks.slice(0, 6).map(track => [{ text: ((provider === "apple" ? track.trackName : track.title) + " — " + (provider === "apple" ? track.artistName : track.artist?.name || "")).slice(0, 60), callback_data: provider === "apple" ? "music:" + track.trackId : "deezer:" + track.id }]);
+  const rows = buildMusicKeyboardRows(tracks, provider);
   await sendText(env, chatId, "🎵 <b>نتائج البحث عن:</b> " + escapeHtml(clean) + "\nاختر مقطعاً لفتح معاينة قصيرة:", { reply_markup: { inline_keyboard: rows } });
 }
 async function sendMusicPreview(env, callback, trackId) {
@@ -733,27 +764,89 @@ async function handleCommands(env, message, member) {
   }
   return false;
 }
-async function handleCallback(env, callback) {
+export async function handleCallback(env, callback) {
   if (await handleNewCallback(env, callback)) return;
   const parts = (callback.data || "").split("|");
   const action = parts[0];
-  if (action === "report_dismiss") {
-    const authorized = await isChatAdmin(env, callback.message.chat.id, callback.from.id).catch(() => false);
-    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: authorized ? "Report dismissed." : "Administrator access required.", show_alert: !authorized });
+  if (!["report_del", "report_ban", "report_dismiss"].includes(action)) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "إجراء غير معروف." });
     return;
   }
-  if (!["report_del", "report_ban"].includes(action)) { await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "Unknown action." }); return; }
-  const chatId = Number(parts[1]), messageId = Number(parts[2]), userId = Number(parts[3]);
-  const authorized = await isChatAdmin(env, callback.message.chat.id, callback.from.id).catch(() => false);
-  if (![chatId, messageId, userId].every(Number.isSafeInteger) || !authorized) {
-    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "Administrator access required.", show_alert: true }); return;
+
+  const reportChatId = Number(callback.message?.chat?.id);
+  const reportMessageId = Number(callback.message?.message_id);
+  const actorId = Number(callback.from?.id);
+  if (![reportChatId, reportMessageId, actorId].every(Number.isSafeInteger)) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "بيانات البلاغ غير صالحة.", show_alert: true });
+    return;
   }
-  await telegram(env, "deleteMessage", { chat_id: chatId, message_id: messageId }).catch(() => null);
-  if (action === "report_ban") await telegram(env, "banChatMember", { chat_id: chatId, user_id: userId });
-  await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: action === "report_ban" ? "User banned and message deleted." : "Message deleted." });
+
+  const authorized = await isChatAdmin(env, reportChatId, actorId).catch(() => false);
+  if (!authorized) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "هذه العملية للمشرفين فقط.", show_alert: true });
+    return;
+  }
+
+  if (action === "report_dismiss") {
+    const result = await env.DB.prepare(
+      "UPDATE reports SET status = 'dismissed' WHERE report_chat_id = ? AND report_message_id = ? AND status = 'open'"
+    ).bind(reportChatId, reportMessageId).run();
+    const updated = Number(result.meta?.changes || 0) === 1;
+    await telegram(env, "answerCallbackQuery", {
+      callback_query_id: callback.id,
+      text: updated ? "تم تجاهل البلاغ." : "تمت معالجة البلاغ مسبقاً أو لم يعد متاحاً.",
+      show_alert: !updated,
+    });
+    return;
+  }
+
+  const chatId = Number(parts[1]);
+  const messageId = Number(parts[2]);
+  const userId = Number(parts[3]);
+  if (![chatId, messageId, userId].every(Number.isSafeInteger)) {
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "بيانات البلاغ غير صالحة.", show_alert: true });
+    return;
+  }
+
+  const claimed = await env.DB.prepare(
+    "UPDATE reports SET status = 'processing' WHERE report_chat_id = ? AND report_message_id = ? AND source_chat_id = ? AND source_message_id = ? AND reported_user_id = ? AND status = 'open'"
+  ).bind(reportChatId, reportMessageId, chatId, messageId, userId).run();
+  if (Number(claimed.meta?.changes || 0) !== 1) {
+    await telegram(env, "answerCallbackQuery", {
+      callback_query_id: callback.id,
+      text: "تمت معالجة البلاغ مسبقاً أو لم يعد متاحاً.",
+      show_alert: true,
+    });
+    return;
+  }
+
+  try {
+    if (action === "report_ban") {
+      await telegramConfirmed(env, "banChatMember", { chat_id: chatId, user_id: userId });
+    }
+    await telegramConfirmed(env, "deleteMessage", { chat_id: chatId, message_id: messageId });
+    await env.DB.prepare(
+      "UPDATE reports SET status = ? WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
+    ).bind(action === "report_ban" ? "banned" : "resolved", reportChatId, reportMessageId).run();
+    await telegram(env, "answerCallbackQuery", {
+      callback_query_id: callback.id,
+      text: action === "report_ban" ? "تم حظر العضو وحذف رسالته." : "تم حذف الرسالة.",
+    });
+  } catch (error) {
+    await env.DB.prepare(
+      "UPDATE reports SET status = 'open' WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
+    ).bind(reportChatId, reportMessageId).run().catch(() => null);
+    await telegram(env, "answerCallbackQuery", {
+      callback_query_id: callback.id,
+      text: "تعذر تنفيذ الإجراء. تحقق من صلاحيات البوت وحاول مجدداً.",
+      show_alert: true,
+    }).catch(() => null);
+    console.error("Ronin report action failed", error);
+  }
 }
 async function duplicateFingerprint(message) {
   const text=getText(message).normalize("NFKC").toLocaleLowerCase().replace(/\s+/g," ").trim();
+  if (/^[\/!]\S+/.test(text)) return null;
   const media=whisperMedia(message);
   const mediaKey=media ? String(media[1]) : "";
   const source=text || mediaKey;
@@ -792,7 +885,17 @@ async function handleMessage(env, message, edited = false) {
   if (!edited && await handleCommands(env, message, member)) return;
   const text = getText(message);
   if (!edited && !/^\//.test(text.trim()) && await isRepeatedMessage(env,message).catch(error=>{console.warn("duplicate detection failed",error);return false;})) {
-    await telegram(env,"deleteMessage",{chat_id:message.chat.id,message_id:message.message_id}).catch(error=>console.warn("duplicate delete failed",error));
+    if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) {
+      await recordClean(env.DB, userId, message.chat.id);
+      return;
+    }
+    try {
+      await telegramConfirmed(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id });
+    } catch (error) {
+      console.warn("duplicate message could not be deleted; moderation was skipped", error);
+      await logModeration(env, message.chat, message.from, "failed to delete repeated message", text).catch(() => null);
+      return;
+    }
     await recordViolation(env.DB,userId,"spam",message.chat.id);
     return;
   }
@@ -803,7 +906,13 @@ async function handleMessage(env, message, edited = false) {
   const moderationReason = reason || (lowMedia ? "media from low-reputation account" : null) || (lowLink ? "link from low-reputation account" : null) || (lowEmoji ? "single-emoji spam" : null);
   if (moderationReason) {
     if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) { if (!edited) await recordClean(env.DB, userId, message.chat.id); return; }
-    await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id }).catch(() => null);
+    try {
+      await telegramConfirmed(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id });
+    } catch (error) {
+      console.warn("moderated message could not be deleted; moderation was skipped", error);
+      await logModeration(env, message.chat, message.from, "failed to delete: " + moderationReason, text).catch(() => null);
+      return;
+    }
     await recordViolation(env.DB, userId, moderationReason === "profanity" ? "profanity" : "spam", message.chat.id);
     member = await getMember(env.DB, userId);
     await logModeration(env, message.chat, message.from, moderationReason, text).catch(() => null);
