@@ -844,7 +844,7 @@ export async function handleCallback(env, callback) {
     console.error("Ronin report action failed", error);
   }
 }
-async function duplicateFingerprint(message) {
+export async function duplicateFingerprint(message) {
   const text=getText(message).normalize("NFKC").toLocaleLowerCase().replace(/\s+/g," ").trim();
   if (/^[\/!]\S+/.test(text)) return null;
   const media=whisperMedia(message);
