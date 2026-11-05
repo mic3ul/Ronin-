@@ -291,6 +291,13 @@ test("duplicate fingerprints normalize text, ignore commands, and hash media ide
   const first = await duplicateFingerprint({ text: "  Hello   WORLD " });
   const normalized = await duplicateFingerprint({ text: "hello world" });
   assert.equal(first, normalized);
+
+  const arabicPlain = await duplicateFingerprint({ text: "السلام" });
+  const arabicVocalized = await duplicateFingerprint({ text: "السَّلَامُ" });
+  const arabicStretched = await duplicateFingerprint({ text: "الســلام" });
+  assert.equal(arabicVocalized, arabicPlain);
+  assert.equal(arabicStretched, arabicPlain);
+
   assert.equal(await duplicateFingerprint({ text: "/ping" }), null);
   assert.equal(await duplicateFingerprint({ text: "!rules" }), null);
 
