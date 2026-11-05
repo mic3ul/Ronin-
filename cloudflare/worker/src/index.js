@@ -57,6 +57,8 @@ export async function duplicateFingerprint(message) {
     .normalize("NFKC")
     .toLowerCase()
     .replace(/[\u200B-\u200F\uFEFF]/g, "")
+    // Arabic tashkeel and tatweel do not change the underlying duplicate text.
+    .replace(/[\u0640\u064B-\u065F\u0670]/g, "")
     .replace(/\s+/gu, " ")
     .trim();
   // Commands must remain repeatable; duplicate moderation applies to ordinary content.
