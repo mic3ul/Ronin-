@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import worker, { deleteRepeatedMessage, duplicateFingerprint, escapeHtml, handleCallback, isDrugSpam, isRepeatedMessage, normalizeCommand, safeEqual } from "../src/index.js";
+import worker, { deleteRepeatedMessage, duplicateFingerprint, escapeHtml, handleCallback, handleMessage, isDrugSpam, isRepeatedMessage, normalizeCommand, safeEqual } from "../src/index.js";
 
 test("webhook secret comparison rejects wrong values", () => {
   assert.equal(safeEqual("secret_123", "secret_123"), true);
@@ -439,4 +439,138 @@ test("final duplicate index migration removes legacy indexes and keeps the chat-
   assert.match(sql, /DROP INDEX IF EXISTS idx_duplicate_messages_created_at;/);
   assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_duplicate_messages_chat_time/);
   assert.ok(sql.includes("ON duplicate_messages(chat_id, created_at)"));
+});
+
+
+function createModerationDb() {
+  const member = {
+    user_id: 456,
+    message_count: 0,
+    reputation_points: 0,
+    profanity_violations: 0,
+    spam_violations: 0,
+  };
+  const duplicateKeys = new Set();
+  return {
+    member,
+    prepare(sql) {
+      return {
+        bind(...values) {
+          return {
+            async run() {
+              if (sql.startsWith("INSERT OR IGNORE INTO members")) return { meta: { changes: 0 } };
+              if (sql.startsWith("DELETE FROM duplicate_messages")) return { meta: { changes: 0 } };
+              if (sql.startsWith("INSERT INTO duplicate_messages")) {
+                const key = String(values[0]) + ":" + values[1];
+                if (duplicateKeys.has(key)) return { meta: { changes: 0 } };
+                duplicateKeys.add(key);
+                return { meta: { changes: 1 } };
+              }
+              if (sql.startsWith("UPDATE members SET spam_violations")) {
+                member.spam_violations += 1;
+                member.reputation_points = Math.max(-5000, member.reputation_points - 10);
+                return { meta: { changes: 1 } };
+              }
+              if (sql.startsWith("UPDATE members SET profanity_violations")) {
+                member.profanity_violations += 1;
+                member.reputation_points = Math.max(-5000, member.reputation_points - 10);
+                return { meta: { changes: 1 } };
+              }
+              if (sql.startsWith("UPDATE members SET message_count")) {
+                member.message_count += 1;
+                member.reputation_points += 1;
+                return { meta: { changes: 1 } };
+              }
+              throw new Error("Unexpected moderation-test SQL: " + sql);
+            },
+            async first() {
+              if (sql.includes("FROM members WHERE user_id = ?")) return { ...member };
+              throw new Error("Unexpected moderation-test query: " + sql);
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+test("generic spam moderation does not record a violation when Telegram cannot delete the message", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const DB = createModerationDb();
+  const calls = [];
+  console.warn = () => {};
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    calls.push(method);
+    if (method === "getChatMember") {
+      return new Response(JSON.stringify({ ok: true, result: { status: "member" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, result: false }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  });
+
+  await handleMessage({
+    DB,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+    SPAM_TOKENS: "scam-token",
+    AUTOBAN_ENABLED: "true",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Member", is_bot: false },
+    message_id: 792,
+    text: "scam-token",
+  });
+
+  assert.deepEqual(calls, ["getChatMember", "deleteMessage"]);
+  assert.equal(DB.member.spam_violations, 0);
+  assert.equal(DB.member.reputation_points, 0);
+});
+
+test("generic spam moderation records a violation only after Telegram confirms deletion", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const DB = createModerationDb();
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    calls.push(method);
+    if (method === "getChatMember") {
+      return new Response(JSON.stringify({ ok: true, result: { status: "member" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await handleMessage({
+    DB,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+    SPAM_TOKENS: "scam-token",
+    AUTOBAN_ENABLED: "false",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Member", is_bot: false },
+    message_id: 793,
+    text: "scam-token",
+  });
+
+  assert.deepEqual(calls, ["getChatMember", "deleteMessage"]);
+  assert.equal(DB.member.spam_violations, 1);
+  assert.equal(DB.member.reputation_points, -10);
 });
