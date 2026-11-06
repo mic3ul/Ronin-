@@ -156,7 +156,7 @@ async function logModeration(env, chat, user, reason, text) {
   const name = escapeHtml([user.first_name, user.last_name].filter(Boolean).join(" ").slice(0, 80));
   await sendText(env, env.LOGS_CHAT_ID, "<b>إجراء إشرافي من Ronin</b>\nالسبب: " + reason + "\nالمجموعة: " + escapeHtml(chat.title || chat.id) + "\nUser: " + name + " (<code>" + user.id + "</code>)\n<code>" + excerpt + "</code>");
 }
-export async function deleteRepeatedMessage(env, message) {
+async function deleteModeratedMessage(env, message, reason) {
   try {
     const deleted = await telegram(env, "deleteMessage", {
       chat_id: message.chat.id,
@@ -165,16 +165,20 @@ export async function deleteRepeatedMessage(env, message) {
     if (deleted !== true) throw new Error("Telegram did not confirm message deletion");
     return true;
   } catch (error) {
-    console.warn("Ronin could not delete a repeated message", error);
+    console.warn("Ronin could not delete a moderated message", error);
     await logModeration(
       env,
       message.chat,
       message.from,
-      "failed to delete repeated message",
+      "failed to delete " + reason,
       getText(message),
     ).catch(() => null);
     return false;
   }
+}
+
+export async function deleteRepeatedMessage(env, message) {
+  return deleteModeratedMessage(env, message, "repeated message");
 }
 
 async function maybeAutoBan(env, chatId, userId, member) {
@@ -317,7 +321,7 @@ export async function handleCallback(env, callback) {
     console.error("Ronin report action failed", error);
   }
 }
-async function handleMessage(env, message, edited = false) {
+export async function handleMessage(env, message, edited = false) {
   if (!message || !message.from || message.from.is_bot || !isGroup(message.chat)) return;
   if (!parseIds(env.MAIN_GROUP_IDS).has(Number(message.chat.id))) return;
   const userId = message.from.id;
@@ -346,7 +350,8 @@ async function handleMessage(env, message, edited = false) {
   const moderationReason = reason || (lowMedia ? "media from low-reputation account" : null) || (lowLink ? "link from low-reputation account" : null) || (lowEmoji ? "single-emoji spam" : null);
   if (moderationReason) {
     if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) { if (!edited) await recordClean(env.DB, userId); return; }
-    await telegram(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id }).catch(() => null);
+    // A failed delete must not create a strike or trigger an automatic ban.
+    if (!await deleteModeratedMessage(env, message, moderationReason)) return;
     await recordViolation(env.DB, userId, moderationReason === "profanity" ? "profanity" : "spam");
     member = await getMember(env.DB, userId);
     await logModeration(env, message.chat, message.from, moderationReason, text).catch(() => null);
