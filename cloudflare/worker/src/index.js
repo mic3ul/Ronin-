@@ -297,11 +297,14 @@ export async function handleCallback(env, callback) {
     return;
   }
 
+  let banned = false;
   try {
     if (action === "report_ban") {
       await telegram(env, "banChatMember", { chat_id: chatId, user_id: userId });
+      banned = true;
     }
-    await telegram(env, "deleteMessage", { chat_id: chatId, message_id: messageId });
+    const deleted = await telegram(env, "deleteMessage", { chat_id: chatId, message_id: messageId });
+    if (deleted !== true) throw new Error("Telegram did not confirm report message deletion");
     await env.DB.prepare(
       "UPDATE reports SET status = ? WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
     ).bind(action === "report_ban" ? "banned" : "resolved", reportChatId, reportMessageId).run();
@@ -310,12 +313,18 @@ export async function handleCallback(env, callback) {
       text: action === "report_ban" ? "تم حظر العضو وحذف رسالته." : "تم حذف الرسالة.",
     });
   } catch (error) {
+    // A successful ban is irreversible from this callback. Preserve that
+    // outcome if the subsequent message deletion fails, rather than reopening
+    // the report and inviting a duplicate ban attempt.
+    const recoveryStatus = action === "report_ban" && banned ? "banned" : "open";
     await env.DB.prepare(
-      "UPDATE reports SET status = 'open' WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
-    ).bind(reportChatId, reportMessageId).run().catch(() => null);
+      "UPDATE reports SET status = ? WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
+    ).bind(recoveryStatus, reportChatId, reportMessageId).run().catch(() => null);
     await telegram(env, "answerCallbackQuery", {
       callback_query_id: callback.id,
-      text: "تعذر تنفيذ الإجراء. تحقق من صلاحيات البوت وحاول مجدداً.",
+      text: recoveryStatus === "banned"
+        ? "تم حظر العضو، لكن تعذر حذف الرسالة. تحقق من صلاحيات حذف الرسائل."
+        : "تعذر تنفيذ الإجراء. تحقق من صلاحيات البوت وحاول مجدداً.",
       show_alert: true,
     }).catch(() => null);
     console.error("Ronin report action failed", error);
