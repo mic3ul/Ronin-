@@ -845,24 +845,53 @@ export async function handleCallback(env, callback) {
   }
 }
 export async function duplicateFingerprint(message) {
-  const text=getText(message).normalize("NFKC").toLocaleLowerCase().replace(/\s+/g," ").trim();
+  if (!message) return null;
+  const text = String(getText(message) || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\u200B-\u200F\uFEFF]/g, "")
+    .replace(/[\u0640\u064B-\u065F\u0670]/g, "")
+    .replace(/\s+/gu, " ")
+    .trim();
   if (/^[\/!]\S+/.test(text)) return null;
-  const media=whisperMedia(message);
-  const mediaKey=media ? String(media[1]) : "";
-  const source=text || mediaKey;
-  if(!source) return null;
-  const bytes=new TextEncoder().encode(source);
-  const digest=await crypto.subtle.digest("SHA-256",bytes);
-  return Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,"0")).join("");
+
+  let mediaIdentity = "";
+  for (const key of ["photo", "video", "document", "audio", "voice", "video_note", "animation", "sticker"]) {
+    const value = message[key];
+    const item = Array.isArray(value) ? value[value.length - 1] : value;
+    if (item && (item.file_unique_id || item.file_id)) {
+      mediaIdentity = "media:" + key + ":" + (item.file_unique_id || item.file_id);
+      break;
+    }
+  }
+  const source = mediaIdentity || (text ? "text:" + text : "");
+  if (!source) return null;
+
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-async function isRepeatedMessage(env,message) {
-  const fingerprint=await duplicateFingerprint(message);
-  if(!fingerprint) return false;
-  const prior=await env.DB.prepare("SELECT message_id FROM duplicate_messages WHERE chat_id=? AND fingerprint=? AND created_at>=datetime('now','-5 minutes')").bind(message.chat.id,fingerprint).first();
-  if(prior) return true;
-  await env.DB.prepare("INSERT INTO duplicate_messages(chat_id,fingerprint,message_id,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(chat_id,fingerprint) DO UPDATE SET message_id=excluded.message_id,created_at=CURRENT_TIMESTAMP").bind(message.chat.id,fingerprint,message.message_id).run();
-  await env.DB.prepare("DELETE FROM duplicate_messages WHERE created_at<datetime('now','-10 minutes')").run();
-  return false;
+export async function isRepeatedMessage(env, message) {
+  const chatId = Number(message && message.chat && message.chat.id);
+  const messageId = Number(message && message.message_id);
+  if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(messageId)) return false;
+
+  const fingerprint = await duplicateFingerprint(message);
+  if (!fingerprint) return false;
+
+  // Prune old rows periodically rather than issuing a cleanup write for every message.
+  if (messageId % 100 === 0) {
+    await env.DB.prepare(
+      "DELETE FROM duplicate_messages WHERE chat_id = ? AND created_at < datetime('now', '-1 day')"
+    ).bind(chatId).run();
+  }
+
+  // One conditional UPSERT atomically claims the fingerprint for this group.
+  const result = await env.DB.prepare(
+    "INSERT INTO duplicate_messages (chat_id, fingerprint, message_id, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) " +
+    "ON CONFLICT(chat_id, fingerprint) DO UPDATE SET message_id = excluded.message_id, created_at = CURRENT_TIMESTAMP " +
+    "WHERE duplicate_messages.created_at < datetime('now', '-300 seconds')"
+  ).bind(chatId, fingerprint, messageId).run();
+  return Number(result.meta && result.meta.changes || 0) === 0;
 }
 async function handleMessage(env, message, edited = false) {
   if (!message || !isGroup(message.chat)) return;
