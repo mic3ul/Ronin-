@@ -245,6 +245,18 @@ test("duplicate fingerprints normalize Arabic text and prefer media identity ove
   assert.equal(photoA, photoB);
 });
 
+test("duplicate media fingerprint falls back to file_id when file_unique_id is absent", async () => {
+  const first = await duplicateFingerprint({
+    document: { file_id: "legacy-file-id" },
+    caption: "first caption",
+  });
+  const second = await duplicateFingerprint({
+    document: { file_id: "legacy-file-id" },
+    caption: "different caption",
+  });
+  assert.equal(first, second);
+});
+
 test("duplicate fingerprints ignore slash and bang commands", async () => {
   assert.equal(await duplicateFingerprint({ text: "/help" }), null);
   assert.equal(await duplicateFingerprint({ text: "!help" }), null);
