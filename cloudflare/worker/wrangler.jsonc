@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ronin-telegram-edge",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ronin-db",
+      "database_id": "4c2d35fe-99ee-4273-8d1a-37220d01dd54",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "MAIN_GROUP_IDS": "[]",
+    "AUTOBAN_ENABLED": "false",
+    "BURST_ENABLED": "true",
+    "BURST_ACTION": "log",
+    "DRUG_SPAM_ENABLED": "true",
+    "MEDIA_REP_THRESHOLD": "15",
+    "LINK_REP_THRESHOLD": "20",
+    "SINGLE_EMOJI_REP_THRESHOLD": "15"
+  }
+}

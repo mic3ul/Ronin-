@@ -1,0 +1,29 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Local state and databases
+*.sqlite
+*.sqlite3
+*.db
+data/
+tmp/
+temp/
+logs/
+
+# Python build/runtime artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Git and editor metadata
+.git/
+.github/
+.idea/
+.vscode/
+.DS_Store

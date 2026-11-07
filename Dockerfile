@@ -2,23 +2,21 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install the compiler required by some Python wheels.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
 COPY . .
 
-# Create non-root user
-RUN useradd -m -u 1000 botuser && chown -R botuser:botuser /app
+RUN useradd -m -u 1000 botuser && mkdir -p /app/data && chown -R botuser:botuser /app
 USER botuser
 
-# Run the bot
-CMD ["python", "bot.py"]
+# Keep polling as the default; webhook mode serves the Python app directly.
+ENV RUN_MODE=polling
+EXPOSE 8080
+
+CMD ["sh", "-c", "if [ \"$RUN_MODE\" = \"webhook\" ]; then exec python webhook.py; else exec python bot.py; fi"]
