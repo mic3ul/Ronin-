@@ -191,6 +191,68 @@ test("non-admin report callbacks cannot change report state or delete messages",
 });
 
 
+test("report delete callback reopens the report when Telegram does not confirm deletion", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    const result = method === "getChatMember" ? { status: "administrator" }
+      : method === "deleteMessage" ? false : true;
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const DB = createFakeReportDb();
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, {
+    id: "callback-delete-false",
+    data: "report_del|-100|55|42",
+    from: { id: 77 },
+    message: { chat: { id: -200 }, message_id: 900 },
+  });
+
+  assert.equal(DB.report.status, "open");
+  assert.deepEqual(calls.map((call) => call.method), [
+    "getChatMember", "deleteMessage", "answerCallbackQuery",
+  ]);
+  assert.match(calls.at(-1).payload.text, /تعذر تنفيذ الإجراء/);
+});
+
+test("report ban preserves the completed ban when message deletion is not confirmed", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    const result = method === "getChatMember" ? { status: "administrator" }
+      : method === "deleteMessage" ? false : true;
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const DB = createFakeReportDb();
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, {
+    id: "callback-ban-delete-false",
+    data: "report_ban|-100|55|42",
+    from: { id: 77 },
+    message: { chat: { id: -200 }, message_id: 900 },
+  });
+
+  assert.equal(DB.report.status, "banned");
+  assert.deepEqual(calls.map((call) => call.method), [
+    "getChatMember", "banChatMember", "deleteMessage", "answerCallbackQuery",
+  ]);
+  assert.match(calls.at(-1).payload.text, /تم حظر العضو، لكن تعذر حذف الرسالة/);
+});
+
 function createProcessedUpdateDb({ status = "processing", stale = false } = {}) {
   const row = { status, stale };
   return {
