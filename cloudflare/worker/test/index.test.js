@@ -13,7 +13,7 @@ test("Arabic report summaries escape untrusted group, member, and message text",
   assert.ok(report.includes("<b>بلاغ جديد</b>"));
   assert.match(report, /&lt;مجموعة &amp; &quot;خاصة&quot;&gt;/);
   assert.match(report, /&lt;عضو&gt;/);
-  assert.match(report, /&lt;script&gt;alert\(&quot;x&quot;\)&lt;\\/script&gt; &amp; text/);
+  assert.ok(report.includes("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; text"));
   assert.doesNotMatch(report, /<script>/);
 });
 
