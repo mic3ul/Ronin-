@@ -1,6 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildMusicKeyboardRows, duplicateFingerprint, getProfileLevel, handleCallback, isDrugSpam, isRepeatedMessage, normalizeMusicTracks, safeEqual } from "../src/index.js";
+import worker, { buildMusicKeyboardRows, duplicateFingerprint, formatReportMessage, getProfileLevel, handleCallback, isDrugSpam, isRepeatedMessage, normalizeMusicTracks, safeEqual } from "../src/index.js";
+
+test("Arabic report summaries escape untrusted group, member, and message text", () => {
+  const report = formatReportMessage(
+    { id: -100123, title: '<مجموعة & "خاصة">' },
+    { id: 42, first_name: "<عضو>" },
+    { id: 77 },
+    '<script>alert("x")</script> & text',
+  );
+
+  assert.match(report, /<b>بلاغ جديد<\\/b>/);
+  assert.match(report, /&lt;مجموعة &amp; &quot;خاصة&quot;&gt;/);
+  assert.match(report, /&lt;عضو&gt;/);
+  assert.match(report, /&lt;script&gt;alert\(&quot;x&quot;\)&lt;\\/script&gt; &amp; text/);
+  assert.doesNotMatch(report, /<script>/);
+});
 
 test("webhook secret comparison rejects wrong values", () => {
   assert.equal(safeEqual("secret_123", "secret_123"), true);
