@@ -21,6 +21,16 @@ export function isDrugSpam(value) {
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"]/g, (char) => char === "&" ? "&amp;" : char === "<" ? "&lt;" : char === ">" ? "&gt;" : "&quot;");
 }
+
+export function formatReportMessage(chat, target, reporter, text) {
+  const chatName = escapeHtml(chat?.title || chat?.id || "مجموعة");
+  const targetName = escapeHtml(target?.first_name || "عضو");
+  const excerpt = escapeHtml(String(text || "").slice(0, 600));
+  return "<b>بلاغ جديد</b>\nالمجموعة: " + chatName
+    + "\nالعضو المبلّغ عنه: " + targetName + " (<code>" + Number(target?.id || 0) + "</code>)"
+    + "\nمقدّم البلاغ: <code>" + Number(reporter?.id || 0) + "</code>"
+    + "\nالرسالة: " + excerpt;
+}
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 }
@@ -660,19 +670,19 @@ async function handleCommands(env, message, member) {
   if (command === "/report" || command === "!report") {
     const target = message.reply_to_message;
     if (!target || !target.from || target.from.id === message.from.id || !env.REPORTS_CHAT_ID) {
-      await sendText(env, chatId, "Reply to a message to report it. Reports are unavailable until REPORTS_CHAT_ID is configured.");
+      await sendText(env, chatId, "ردّ على رسالة العضو المراد الإبلاغ عنه. استقبال البلاغات غير مفعّل حتى تُضبط قناة البلاغات.");
       return true;
     }
-    if (await isChatAdmin(env, chatId, target.from.id).catch(() => false)) { await sendText(env, chatId, "Administrators cannot be reported."); return true; }
+    if (await isChatAdmin(env, chatId, target.from.id).catch(() => false)) { await sendText(env, chatId, "لا يمكن الإبلاغ عن مشرفي المجموعة."); return true; }
     const note = await sendText(env, env.REPORTS_CHAT_ID,
-      "<b>New report</b>\nChat: " + (message.chat.title || chatId) + "\nReported user: " + escapeHtml(target.from.first_name || "Member") + " (<code>" + target.from.id + "</code>)\nReporter: <code>" + message.from.id + "</code>\nMessage: " + escapeHtml(getText(target).slice(0, 600)),
+      formatReportMessage(message.chat, target.from, message.from, getText(target)),
       { reply_markup: { inline_keyboard: [[
         { text: "Delete", callback_data: "report_del|" + chatId + "|" + target.message_id + "|" + target.from.id },
         { text: "Ban + delete", callback_data: "report_ban|" + chatId + "|" + target.message_id + "|" + target.from.id },
         { text: "Dismiss", callback_data: "report_dismiss" },
       ]] } });
     await env.DB.prepare("INSERT OR IGNORE INTO reports (report_chat_id, report_message_id, source_chat_id, source_message_id, reported_user_id, reporter_user_id) VALUES (?, ?, ?, ?, ?, ?)").bind(env.REPORTS_CHAT_ID, note.message_id, chatId, target.message_id, target.from.id, message.from.id).run();
-    await sendText(env, chatId, "Your report has been sent to the moderators.");
+    await sendText(env, chatId, "تم إرسال البلاغ إلى المشرفين.");
     return true;
   }
   if (["/games", "!games", "/العاب", "/ألعاب"].includes(command)) {
