@@ -520,20 +520,25 @@ async function handleNewCallback(env, callback) {
       }
       const opened = await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='opening'").bind(id).run();
       if (Number(opened.meta?.changes || 0) !== 1) throw new Error("Whisper state changed before delivery could be finalized");
-      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة." });
-      try {
-        await telegram(env, "sendMessage", {
-          chat_id: chatId,
-          text: "📭 تم فتح همستك من المستلم.",
-          ephemeral_message_parameters: { receiver_user_id: whisper.sender_user_id }
-        });
-      } catch (notificationError) {
-        console.warn("Whisper sender notification could not be delivered", notificationError);
-      }
     } catch (error) {
       await env.DB.prepare("UPDATE whispers SET status='pending' WHERE id=? AND status='opening'").bind(id).run().catch(() => null);
       console.error("Whisper open delivery failed", error);
       await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تعذر فتح الهمسة. حاول مجدداً.", show_alert: true });
+      return true;
+    }
+    // The content is already delivered and the state is committed; a callback-answer
+    // failure must not roll the whisper back and allow the recipient to receive it twice.
+    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة." }).catch((error) => {
+      console.warn("Whisper callback acknowledgement failed", error);
+    });
+    try {
+      await telegram(env, "sendMessage", {
+        chat_id: chatId,
+        text: "📭 تم فتح همستك من المستلم.",
+        ephemeral_message_parameters: { receiver_user_id: whisper.sender_user_id }
+      });
+    } catch (notificationError) {
+      console.warn("Whisper sender notification could not be delivered", notificationError);
     }
     return true;
   }
