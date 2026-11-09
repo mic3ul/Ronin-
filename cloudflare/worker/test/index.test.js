@@ -433,6 +433,7 @@ test("opening a text whisper reveals it ephemerally and notifies the sender", as
   assert.ok(delivery);
   assert.equal(delivery.payload.ephemeral_message_parameters.receiver_user_id, 200);
   assert.ok(delivery.payload.text.includes("رسالة لا يراها إلا المستلم"));
+  assert.equal(delivery.payload.reply_markup.inline_keyboard[0][0].callback_data, "whisper_reply:42");
   assert.equal(DB.whisper.status, "opened");
   assert.ok(calls.some((call) => call.method === "sendMessage"
     && call.payload.ephemeral_message_parameters?.receiver_user_id === 100
@@ -456,6 +457,7 @@ test("opening a media whisper sends the stored Telegram file only to its recipie
   assert.equal(delivery.payload.photo, "photo-file-id");
   assert.equal(delivery.payload.ephemeral_message_parameters.receiver_user_id, 200);
   assert.equal(delivery.payload.ephemeral_message_parameters.callback_query_id, "whisper-open-callback");
+  assert.equal(delivery.payload.reply_markup.inline_keyboard[0][0].callback_data, "whisper_reply:42");
   assert.equal(DB.whisper.status, "opened");
 });
 
