@@ -37,7 +37,7 @@ Implemented in this first native port:
 - Daily check-ins (`/checkin`) and a per-group reputation leaderboard (`/top`).
 - Member profile cards (`/profile`) with deterministic XP levels, group rank, message totals, and milestone badges; `/id` shows the current group and member IDs, and `/help` lists commands.
 - Private one-to-one whispers (`/whisper @username text`) with an explicit open button and an opened status.
-- Private `/start` registration so users can receive whispers; recipients must start the bot first.
+- Private `/start` registration for username lookup; replying to a member's group message can target them without a private registration.
 - Moderator report buttons, audit log output, and optional repeat-spam autoban.
 
 Not yet ported from the Python runtime:
@@ -98,7 +98,7 @@ Set these in the Worker settings or add them to `vars` in `wrangler.jsonc`:
 - `BURST_ENABLED`, `BURST_ACTION`: `log` is the safe default; `delete` is more aggressive.
 - `MEDIA_REP_THRESHOLD`, `LINK_REP_THRESHOLD`, `SINGLE_EMOJI_REP_THRESHOLD`.
 
-Whispers are delivered only to users who have opened the bot and sent `/start`; Telegram does not let a bot initiate a private conversation with an arbitrary username. The opened indicator is recorded when the recipient presses **Open whisper** (the Bot API does not expose message read receipts).
+Whispers use Telegram ephemeral messages in the originating group: only the recipient sees a placeholder, and the text or media is delivered ephemerally after they press **Open whisper**. The sender receives an ephemeral opened notification. Telegram does not expose message read receipts, and ephemeral delivery is not guaranteed while a recipient is offline. Username-based recipient lookup requires the recipient to have previously opened the bot and sent `/start`; replying to a member's group message can target them directly. Ronin must be an administrator in the group to send ephemeral messages to arbitrary members after the initial action window.
 
 The initial configuration intentionally leaves `MAIN_GROUP_IDS` empty and
 autoban disabled so a fresh deployment cannot moderate an unintended group.
