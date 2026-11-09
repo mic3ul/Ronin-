@@ -495,3 +495,26 @@ test("a whisper can only be opened once", async (t) => {
     && call.payload.ephemeral_message_parameters?.callback_query_id);
   assert.ok(delivery.payload.text.includes("legacy plain-text whisper"));
 });
+
+
+test("callback acknowledgement failure does not reopen an already delivered whisper", async (t) => {
+  const calls = mockTelegramApi(t);
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith("/answerCallbackQuery")) throw new Error("simulated callback acknowledgement failure");
+    return normalFetch(url, options);
+  };
+  const DB = createFakeWhisperDb({
+    id: 42,
+    sender_user_id: 100,
+    recipient_user_id: 200,
+    body: JSON.stringify({ version: 1, text: "تم تسليمها", media: null }),
+    status: "pending",
+  });
+
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, whisperOpenCallback());
+
+  assert.equal(DB.whisper.status, "opened");
+  assert.equal(calls.filter((call) => call.method === "sendMessage"
+    && call.payload.ephemeral_message_parameters?.callback_query_id).length, 1);
+});
