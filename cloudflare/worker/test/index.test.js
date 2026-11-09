@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildMusicKeyboardRows, duplicateFingerprint, formatReportMessage, getProfileLevel, handleCallback, isDrugSpam, isRepeatedMessage, normalizeMusicTracks, safeEqual } from "../src/index.js";
+import worker, { buildMusicKeyboardRows, duplicateFingerprint, finishWhisperDraft, formatReportMessage, getProfileLevel, handleCallback, isDrugSpam, isRepeatedMessage, normalizeMusicTracks, safeEqual } from "../src/index.js";
 
 test("Arabic report summaries escape untrusted group, member, and message text", () => {
   const report = formatReportMessage(
@@ -330,4 +330,168 @@ test("duplicate detection ignores messages without valid identifiers or content"
   assert.equal(await isRepeatedMessage({ DB }, { chat: { id: -1001 }, text: "hello" }), false);
   assert.equal(await isRepeatedMessage({ DB }, { chat: { id: -1001 }, message_id: 1 }), false);
   assert.equal(DB.entries.size, 0);
+});
+
+
+function createFakeWhisperDb(initialWhisper = null) {
+  let whisper = initialWhisper ? { ...initialWhisper } : null;
+  const nextId = initialWhisper?.id || 42;
+  return {
+    get whisper() { return whisper ? { ...whisper } : null; },
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async first() {
+          if (sql.includes("SELECT * FROM whispers WHERE id=?")) {
+            return whisper && Number(whisper.id) === Number(values[0]) ? { ...whisper } : null;
+          }
+          throw new Error("Unexpected whisper-test SELECT: " + sql);
+        },
+        async run() {
+          if (sql.includes("INSERT INTO whispers")) {
+            whisper = {
+              id: nextId,
+              sender_user_id: values[0],
+              recipient_user_id: values[1],
+              body: values[2],
+              status: "pending",
+              opened_at: null,
+            };
+            return { meta: { last_row_id: nextId, changes: 1 } };
+          }
+          if (sql.includes("UPDATE whispers SET status='opening'")) {
+            const matches = whisper && Number(whisper.id) === Number(values[0]) && whisper.status === "pending";
+            if (matches) whisper.status = "opening";
+            return { meta: { changes: matches ? 1 : 0 } };
+          }
+          if (sql.includes("UPDATE whispers SET status='opened'")) {
+            const matches = whisper && Number(whisper.id) === Number(values[0]) && whisper.status === "opening";
+            if (matches) { whisper.status = "opened"; whisper.opened_at = "2026-11-09 12:00:00"; }
+            return { meta: { changes: matches ? 1 : 0 } };
+          }
+          if (sql.includes("UPDATE whispers SET status='pending'")) {
+            const matches = whisper && Number(whisper.id) === Number(values[0]) && whisper.status === "opening";
+            if (matches) whisper.status = "pending";
+            return { meta: { changes: matches ? 1 : 0 } };
+          }
+          if (sql.includes("UPDATE whispers SET status='failed'")) {
+            if (whisper && Number(whisper.id) === Number(values[0])) whisper.status = "failed";
+            return { meta: { changes: 1 } };
+          }
+          if (sql.includes("UPDATE whisper_drafts SET status='sent'") || sql.includes("UPDATE whisper_drafts SET status='failed'")) {
+            return { meta: { changes: 1 } };
+          }
+          throw new Error("Unexpected whisper-test SQL: " + sql);
+        },
+      };
+    },
+  };
+}
+
+function whisperOpenCallback({ id = 42, actorId = 200, chatId = -100123 } = {}) {
+  return {
+    id: "whisper-open-callback",
+    data: "whisper_open:" + id,
+    from: { id: actorId, first_name: "المستلم" },
+    message: { chat: { id: chatId }, message_id: 0, ephemeral_message_id: 12 },
+  };
+}
+
+test("finishing a whisper sends only an ephemeral open prompt and keeps content pending", async (t) => {
+  const calls = mockTelegramApi(t, { results: { getMe: { id: 999, username: "ronin_bot" } } });
+  const DB = createFakeWhisperDb();
+  await finishWhisperDraft(
+    { DB, TELEGRAM_BOT_TOKEN: "test-token" },
+    { token: "draft-token", chat_id: -100123, sender_user_id: 100, recipient_user_id: 200, mode: "text" },
+    { from: { id: 100 }, chat: { id: 100 }, text: "محتوى سري لا يظهر قبل الفتح" },
+  );
+
+  const prompt = calls.find((call) => call.method === "sendMessage" && call.payload.ephemeral_message_parameters);
+  assert.ok(prompt);
+  assert.equal(prompt.payload.ephemeral_message_parameters.receiver_user_id, 200);
+  assert.equal(prompt.payload.text.includes("محتوى سري"), false);
+  assert.equal(prompt.payload.reply_markup.inline_keyboard[0][0].callback_data, "whisper_open:42");
+  assert.equal(DB.whisper.status, "pending");
+  assert.ok(DB.whisper.body.includes('"version":1'));
+});
+
+test("opening a text whisper reveals it ephemerally and notifies the sender", async (t) => {
+  const calls = mockTelegramApi(t);
+  const DB = createFakeWhisperDb({
+    id: 42,
+    sender_user_id: 100,
+    recipient_user_id: 200,
+    body: JSON.stringify({ version: 1, text: "رسالة لا يراها إلا المستلم", media: null }),
+    status: "pending",
+  });
+
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, whisperOpenCallback());
+
+  const delivery = calls.find((call) => call.method === "sendMessage"
+    && call.payload.ephemeral_message_parameters?.callback_query_id === "whisper-open-callback");
+  assert.ok(delivery);
+  assert.equal(delivery.payload.ephemeral_message_parameters.receiver_user_id, 200);
+  assert.ok(delivery.payload.text.includes("رسالة لا يراها إلا المستلم"));
+  assert.equal(DB.whisper.status, "opened");
+  assert.ok(calls.some((call) => call.method === "sendMessage"
+    && call.payload.ephemeral_message_parameters?.receiver_user_id === 100
+    && call.payload.text.includes("تم فتح همستك")));
+});
+
+test("opening a media whisper sends the stored Telegram file only to its recipient", async (t) => {
+  const calls = mockTelegramApi(t);
+  const DB = createFakeWhisperDb({
+    id: 42,
+    sender_user_id: 100,
+    recipient_user_id: 200,
+    body: JSON.stringify({ version: 1, text: "", media: { type: "photo", fileId: "photo-file-id" } }),
+    status: "pending",
+  });
+
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, whisperOpenCallback());
+
+  const delivery = calls.find((call) => call.method === "sendPhoto");
+  assert.ok(delivery);
+  assert.equal(delivery.payload.photo, "photo-file-id");
+  assert.equal(delivery.payload.ephemeral_message_parameters.receiver_user_id, 200);
+  assert.equal(delivery.payload.ephemeral_message_parameters.callback_query_id, "whisper-open-callback");
+  assert.equal(DB.whisper.status, "opened");
+});
+
+test("a user cannot open another member's whisper", async (t) => {
+  const calls = mockTelegramApi(t);
+  const DB = createFakeWhisperDb({
+    id: 42,
+    sender_user_id: 100,
+    recipient_user_id: 200,
+    body: JSON.stringify({ version: 1, text: "private", media: null }),
+    status: "pending",
+  });
+
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, whisperOpenCallback({ actorId: 201 }));
+
+  assert.equal(DB.whisper.status, "pending");
+  assert.equal(calls.some((call) => call.payload.ephemeral_message_parameters?.callback_query_id), false);
+});
+
+test("a whisper can only be opened once", async (t) => {
+  const calls = mockTelegramApi(t);
+  const DB = createFakeWhisperDb({
+    id: 42,
+    sender_user_id: 100,
+    recipient_user_id: 200,
+    body: "legacy plain-text whisper",
+    status: "pending",
+  });
+
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, whisperOpenCallback());
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, whisperOpenCallback());
+
+  assert.equal(DB.whisper.status, "opened");
+  assert.equal(calls.filter((call) => call.method === "sendMessage"
+    && call.payload.ephemeral_message_parameters?.callback_query_id).length, 1);
+  const delivery = calls.find((call) => call.method === "sendMessage"
+    && call.payload.ephemeral_message_parameters?.callback_query_id);
+  assert.ok(delivery.payload.text.includes("legacy plain-text whisper"));
 });
