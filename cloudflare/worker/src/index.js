@@ -348,10 +348,34 @@ function whisperMedia(message) {
   for(const k of ["video","animation","document","audio","voice","video_note","sticker"]) if(message[k]?.file_id) return [k,message[k].file_id];
   return null;
 }
-async function finishWhisperDraft(env,draft,message) {
+function serializeWhisperContent(text, media) {
+  return JSON.stringify({
+    version: 1,
+    text: String(text || ""),
+    media: media ? { type: media[0], fileId: media[1] } : null
+  });
+}
+function parseWhisperContent(value) {
+  const raw = String(value ?? "");
+  try {
+    const parsed = JSON.parse(raw);
+    const allowedMedia = ["photo","video","animation","document","audio","voice","video_note","sticker"];
+    if (parsed?.version === 1 && typeof parsed.text === "string"
+      && (parsed.media === null || (allowedMedia.includes(parsed.media?.type)
+        && typeof parsed.media?.fileId === "string" && parsed.media.fileId.length > 0))) {
+      return { text: parsed.text, media: parsed.media };
+    }
+  } catch {}
+  // Backward compatibility for whispers stored before the structured payload.
+  return { text: raw, media: null };
+}
+export async function finishWhisperDraft(env,draft,message) {
   const media=whisperMedia(message), body=(message.text||message.caption||"").trim();
   if((draft.mode==="text" && (!body||media)) || (draft.mode==="media"&&!media)) {
     await sendText(env,message.chat.id,draft.mode==="text"?"أرسل نصاً فقط.":"أرسل صورة أو فيديو أو ملفاً أو صوتاً أو ملصقاً."); return true;
+  }
+  if(body.length > 3500) {
+    await sendText(env,message.chat.id,"الهمسة طويلة جداً. اختصر النص إلى 3500 حرف كحد أقصى."); return true;
   }
   const bot=await telegram(env,"getMe",{});
   const botMember=await telegram(env,"getChatMember",{chat_id:draft.chat_id,user_id:bot.id});
@@ -359,23 +383,24 @@ async function finishWhisperDraft(env,draft,message) {
     await sendText(env,message.chat.id,"يجب أن يكون Ronin مشرفاً في المجموعة حتى يرسل الهمسات الخاصة داخلها.");
     await env.DB.prepare("UPDATE whisper_drafts SET status='failed' WHERE token=?").bind(draft.token).run(); return true;
   }
-  const row=await env.DB.prepare("INSERT INTO whispers(sender_user_id,recipient_user_id,body) VALUES(?,?,?)").bind(draft.sender_user_id,draft.recipient_user_id,body).run();
-  const id=row.meta.last_row_id, base={chat_id:draft.chat_id,ephemeral_message_parameters:{receiver_user_id:draft.recipient_user_id},reply_markup:{inline_keyboard:[[{text:"↩️ رد على الهمسة",callback_data:"whisper_reply:"+id}]]}};
+  const row=await env.DB.prepare("INSERT INTO whispers(sender_user_id,recipient_user_id,body) VALUES(?,?,?)")
+    .bind(draft.sender_user_id,draft.recipient_user_id,serializeWhisperContent(body,media)).run();
+  const id=Number(row.meta?.last_row_id);
+  if(!Number.isSafeInteger(id) || id < 1) throw new Error("Whisper insert did not return a valid id");
   try {
-    if(!media) await telegram(env,"sendMessage",{...base,text:"📩 <b>يا رفيق وصلتك برقية</b>\n"+escapeHtml(body),parse_mode:"HTML"});
-    else {
-      const methods={photo:"sendPhoto",video:"sendVideo",animation:"sendAnimation",document:"sendDocument",audio:"sendAudio",voice:"sendVoice",video_note:"sendVideoNote",sticker:"sendSticker"};
-      const [kind,fileId]=media,payload={...base,[kind]:fileId};
-      if(["photo","video","animation","document","audio","voice"].includes(kind)){payload.caption="📩 يا رفيق وصلتك برقية"+(body?"\n"+escapeHtml(body.slice(0,850)):"");payload.parse_mode="HTML";}
-      await telegram(env,methods[kind],payload);
-    }
-    await env.DB.prepare("UPDATE whispers SET status='opened' WHERE id=?").bind(id).run();
+    await telegram(env,"sendMessage",{
+      chat_id:draft.chat_id,
+      text:"📩 <b>وصلتك همسة خاصة</b>\nاضغط الزر لعرضها. لن يظهر المحتوى لبقية أعضاء المجموعة.",
+      parse_mode:"HTML",
+      ephemeral_message_parameters:{receiver_user_id:draft.recipient_user_id},
+      reply_markup:{inline_keyboard:[[{text:"✉️ فتح الهمسة",callback_data:"whisper_open:"+id}]]}
+    });
     await env.DB.prepare("UPDATE whisper_drafts SET status='sent' WHERE token=?").bind(draft.token).run();
-    await sendText(env,message.chat.id,"✅ تم إرسال الهمسة سراً داخل المجموعة.");
+    await sendText(env,message.chat.id,"✅ تم إرسال تنبيه الهمسة للمستلم. سيظهر المحتوى عند فتحه.");
   } catch(error) {
-    console.error("ephemeral whisper failed",error);
+    console.error("ephemeral whisper notification failed",error);
     await env.DB.prepare("UPDATE whispers SET status='failed' WHERE id=?").bind(id).run();
-    await sendText(env,message.chat.id,"تعذر إيصال الهمسة. تحقق من إصدار تيليجرام وصلاحيات Ronin.");
+    await sendText(env,message.chat.id,"تعذر إيصال تنبيه الهمسة. حاول مجدداً.");
   }
   return true;
 }
@@ -445,7 +470,12 @@ async function handleNewCallback(env, callback) {
     await sendWhisperDeepLink(env,callback,token,mode==="text"?"✍️ همسة نصية":"🖼️ همسة وسائط");return true;
   }
   if (data.startsWith("whisper_open:")) {
-    const id = Number(data.split(":")[1]);
+    const rawId = data.slice("whisper_open:".length);
+    const id = Number(rawId);
+    if (!/^\d+$/.test(rawId) || !Number.isSafeInteger(id) || id < 1) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "معرّف الهمسة غير صالح.", show_alert: true });
+      return true;
+    }
     const whisper = await env.DB.prepare("SELECT * FROM whispers WHERE id=?").bind(id).first();
     if (!whisper || Number(whisper.recipient_user_id) !== Number(callback.from.id)) {
       await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "هذه الهمسة ليست لك.", show_alert: true });
@@ -455,14 +485,56 @@ async function handleNewCallback(env, callback) {
       await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "سبق وفتحت الهمسة." });
       return true;
     }
-    const opened = await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(id).run();
-    if (!opened.meta || opened.meta.changes !== 1) {
-      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة بالفعل." });
+    const claimed = await env.DB.prepare("UPDATE whispers SET status='opening' WHERE id=? AND status='pending'").bind(id).run();
+    if (Number(claimed.meta?.changes || 0) !== 1) {
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "الهمسة قيد الفتح أو فُتحت بالفعل." });
       return true;
     }
-    await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة." });
-    await sendText(env, callback.from.id, "💌 <b>همستك:</b>\n" + escapeHtml(whisper.body));
-    await sendText(env, whisper.sender_user_id, "📭 تم فتح همستك من المستلم.");
+    const chatId = Number(callback.message?.chat?.id);
+    if (!Number.isSafeInteger(chatId)) {
+      await env.DB.prepare("UPDATE whispers SET status='pending' WHERE id=? AND status='opening'").bind(id).run();
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تعذر تحديد المجموعة لفتح الهمسة.", show_alert: true });
+      return true;
+    }
+    const content = parseWhisperContent(whisper.body);
+    const callbackDelivery = {
+      chat_id: chatId,
+      ephemeral_message_parameters: { receiver_user_id: callback.from.id, callback_query_id: callback.id }
+    };
+    const laterDelivery = {
+      chat_id: chatId,
+      ephemeral_message_parameters: { receiver_user_id: callback.from.id }
+    };
+    try {
+      const messageText = "💌 <b>همستك:</b>\n" + escapeHtml(content.text);
+      if (content.media) {
+        if (content.text) {
+          await telegram(env, "sendMessage", { ...callbackDelivery, text: messageText, parse_mode: "HTML" });
+        }
+        const methods = { photo: "sendPhoto", video: "sendVideo", animation: "sendAnimation", document: "sendDocument", audio: "sendAudio", voice: "sendVoice", video_note: "sendVideoNote", sticker: "sendSticker" };
+        const mediaPayload = { ...laterDelivery, [content.media.type]: content.media.fileId };
+        if (!content.text) mediaPayload.ephemeral_message_parameters = callbackDelivery.ephemeral_message_parameters;
+        await telegram(env, methods[content.media.type], mediaPayload);
+      } else {
+        await telegram(env, "sendMessage", { ...callbackDelivery, text: messageText, parse_mode: "HTML" });
+      }
+      const opened = await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='opening'").bind(id).run();
+      if (Number(opened.meta?.changes || 0) !== 1) throw new Error("Whisper state changed before delivery could be finalized");
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تم فتح الهمسة." });
+      try {
+        await telegram(env, "sendMessage", {
+          chat_id: chatId,
+          text: "📭 تم فتح همستك من المستلم.",
+          ephemeral_message_parameters: { receiver_user_id: whisper.sender_user_id }
+        });
+      } catch (notificationError) {
+        console.warn("Whisper sender notification could not be delivered", notificationError);
+      }
+    } catch (error) {
+      await env.DB.prepare("UPDATE whispers SET status='pending' WHERE id=? AND status='opening'").bind(id).run().catch(() => null);
+      console.error("Whisper open delivery failed", error);
+      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تعذر فتح الهمسة. حاول مجدداً.", show_alert: true });
+    }
     return true;
   }
   if (data.startsWith("whisper_reply:")) {
