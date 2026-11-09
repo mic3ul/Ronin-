@@ -505,6 +505,7 @@ async function handleNewCallback(env, callback) {
       chat_id: chatId,
       ephemeral_message_parameters: { receiver_user_id: callback.from.id }
     };
+    const replyMarkup = { inline_keyboard: [[{ text: "↩️ رد على الهمسة", callback_data: "whisper_reply:" + id }]] };
     try {
       const messageText = "💌 <b>همستك:</b>\n" + escapeHtml(content.text);
       if (content.media) {
@@ -512,11 +513,11 @@ async function handleNewCallback(env, callback) {
           await telegram(env, "sendMessage", { ...callbackDelivery, text: messageText, parse_mode: "HTML" });
         }
         const methods = { photo: "sendPhoto", video: "sendVideo", animation: "sendAnimation", document: "sendDocument", audio: "sendAudio", voice: "sendVoice", video_note: "sendVideoNote", sticker: "sendSticker" };
-        const mediaPayload = { ...laterDelivery, [content.media.type]: content.media.fileId };
+        const mediaPayload = { ...laterDelivery, [content.media.type]: content.media.fileId, reply_markup: replyMarkup };
         if (!content.text) mediaPayload.ephemeral_message_parameters = callbackDelivery.ephemeral_message_parameters;
         await telegram(env, methods[content.media.type], mediaPayload);
       } else {
-        await telegram(env, "sendMessage", { ...callbackDelivery, text: messageText, parse_mode: "HTML" });
+        await telegram(env, "sendMessage", { ...callbackDelivery, text: messageText, parse_mode: "HTML", reply_markup: replyMarkup });
       }
       const opened = await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='opening'").bind(id).run();
       if (Number(opened.meta?.changes || 0) !== 1) throw new Error("Whisper state changed before delivery could be finalized");
