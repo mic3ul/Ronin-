@@ -36,7 +36,7 @@ Implemented in this first native port:
 - Race-safe game completion: only the first valid quiz answer can claim a round; RPS is restricted to the player who started it.
 - Daily check-ins (`/checkin`) and a per-group reputation leaderboard (`/top`).
 - Member profile cards (`/profile`) with deterministic XP levels, group rank, message totals, and milestone badges; `/id` shows the current group and member IDs, and `/help` lists commands.
-- Private one-to-one whispers (`/whisper @username text`) with an explicit open button and an opened status.
+- Private one-to-one whispers (`/whisper @username`, or reply to a member with `همسة`): choose text/media, compose in the sender's private chat, and let the recipient reveal the content with an explicit open button.
 - Private `/start` registration for username lookup; replying to a member's group message can target them without a private registration.
 - Moderator report buttons, audit log output, and optional repeat-spam autoban.
 
