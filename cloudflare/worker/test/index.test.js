@@ -415,6 +415,40 @@ function whisperOpenCallback({ id = 42, actorId = 200, chatId = -100123 } = {}) 
   };
 }
 
+test("private /start deep links activate only the matching sender's whisper composer", async (t) => {
+  const calls = mockTelegramApi(t);
+  const token = "a".repeat(24);
+  let draftStatus = "choosing";
+  const DB = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async first() {
+          assert.ok(sql.includes("FROM whisper_drafts"));
+          assert.equal(values[0], token);
+          assert.equal(values[1], 100);
+          return { token, sender_user_id: 100, status: "choosing" };
+        },
+        async run() {
+          assert.ok(sql.includes("UPDATE whisper_drafts SET status='composing'"));
+          draftStatus = "composing";
+          return { meta: { changes: 1 } };
+        },
+      };
+    },
+  };
+
+  await handlePrivateWhisper(
+    { DB, TELEGRAM_BOT_TOKEN: "test-token" },
+    { from: { id: 100 }, chat: { id: 100 }, text: "/start w_" + token },
+  );
+
+  assert.equal(draftStatus, "composing");
+  assert.ok(calls.some((call) => call.method === "sendMessage"
+    && call.payload.text.includes("أرسل نص الهمسة")));
+});
+
 test("finishing a whisper sends only an ephemeral open prompt and keeps content pending", async (t) => {
   const calls = mockTelegramApi(t, { results: { getMe: { id: 999, username: "ronin_bot" } } });
   const DB = createFakeWhisperDb();
@@ -426,6 +460,8 @@ test("finishing a whisper sends only an ephemeral open prompt and keeps content 
 
   const prompt = calls.find((call) => call.method === "sendMessage" && call.payload.ephemeral_message_parameters);
   assert.ok(prompt);
+  assert.ok(prompt.payload.text.includes("\nاضغط"));
+  assert.equal(prompt.payload.text.includes("\\nاضغط"), false);
   assert.equal(prompt.payload.ephemeral_message_parameters.receiver_user_id, 200);
   assert.equal(prompt.payload.text.includes("محتوى سري"), false);
   assert.equal(prompt.payload.reply_markup.inline_keyboard[0][0].callback_data, "whisper_open:42");
