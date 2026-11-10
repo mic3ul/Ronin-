@@ -449,6 +449,39 @@ test("private /start deep links activate only the matching sender's whisper comp
     && call.payload.text.includes("أرسل نص الهمسة")));
 });
 
+test("a different sender cannot activate another user's whisper deep link", async (t) => {
+  const calls = mockTelegramApi(t);
+  const token = "b".repeat(24);
+  const DB = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async first() {
+          assert.ok(sql.includes("sender_user_id=?"));
+          assert.ok(sql.includes("expires_at>CURRENT_TIMESTAMP"));
+          assert.equal(values[0], token);
+          assert.equal(values[1], 999);
+          return null;
+        },
+        async run() {
+          throw new Error("An unauthorized deep link must not change draft state");
+        },
+      };
+    },
+  };
+
+  await handlePrivateWhisper(
+    { DB, TELEGRAM_BOT_TOKEN: "test-token" },
+    { from: { id: 999 }, chat: { id: 999 }, text: "/start w_" + token },
+  );
+
+  assert.ok(calls.some((call) => call.method === "sendMessage"
+    && call.payload.text.includes("انتهت صلاحية محرر الهمسة")));
+  assert.equal(calls.some((call) => call.method === "sendMessage"
+    && call.payload.text.includes("أرسل نص الهمسة")), false);
+});
+
 test("finishing a whisper sends only an ephemeral open prompt and keeps content pending", async (t) => {
   const calls = mockTelegramApi(t, { results: { getMe: { id: 999, username: "ronin_bot" } } });
   const DB = createFakeWhisperDb();
