@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildMusicKeyboardRows, duplicateFingerprint, finishWhisperDraft, formatReportMessage, getProfileLevel, handleCallback, isDrugSpam, isRepeatedMessage, normalizeMusicTracks, safeEqual } from "../src/index.js";
+import worker, { buildMusicKeyboardRows, duplicateFingerprint, finishWhisperDraft, formatReportMessage, getProfileLevel, handleCallback, handlePrivateWhisper, isDrugSpam, isRepeatedMessage, normalizeMusicTracks, safeEqual } from "../src/index.js";
 
 test("Arabic report summaries escape untrusted group, member, and message text", () => {
   const report = formatReportMessage(
@@ -335,9 +335,11 @@ test("duplicate detection ignores messages without valid identifiers or content"
 
 function createFakeWhisperDb(initialWhisper = null) {
   let whisper = initialWhisper ? { ...initialWhisper } : null;
+  let draftStatus = "composing";
   const nextId = initialWhisper?.id || 42;
   return {
     get whisper() { return whisper ? { ...whisper } : null; },
+    get draftStatus() { return draftStatus; },
     prepare(sql) {
       let values = [];
       return {
@@ -379,7 +381,22 @@ function createFakeWhisperDb(initialWhisper = null) {
             if (whisper && Number(whisper.id) === Number(values[0])) whisper.status = "failed";
             return { meta: { changes: 1 } };
           }
-          if (sql.includes("UPDATE whisper_drafts SET status='sent'") || sql.includes("UPDATE whisper_drafts SET status='failed'")) {
+          if (sql.includes("UPDATE whisper_drafts SET status='sending'")) {
+            const matches = draftStatus === "composing";
+            if (matches) draftStatus = "sending";
+            return { meta: { changes: matches ? 1 : 0 } };
+          }
+          if (sql.includes("UPDATE whisper_drafts SET status='composing'")) {
+            const matches = draftStatus === "sending";
+            if (matches) draftStatus = "composing";
+            return { meta: { changes: matches ? 1 : 0 } };
+          }
+          if (sql.includes("UPDATE whisper_drafts SET status='sent'")) {
+            if (draftStatus === "sending") draftStatus = "sent";
+            return { meta: { changes: 1 } };
+          }
+          if (sql.includes("UPDATE whisper_drafts SET status='failed'")) {
+            draftStatus = "failed";
             return { meta: { changes: 1 } };
           }
           throw new Error("Unexpected whisper-test SQL: " + sql);
@@ -414,6 +431,96 @@ test("finishing a whisper sends only an ephemeral open prompt and keeps content 
   assert.equal(prompt.payload.reply_markup.inline_keyboard[0][0].callback_data, "whisper_open:42");
   assert.equal(DB.whisper.status, "pending");
   assert.ok(DB.whisper.body.includes('"version":1'));
+});
+
+test("a composing whisper draft can be claimed only once under concurrent private updates", async (t) => {
+  const calls = mockTelegramApi(t, { results: { getMe: { id: 999, username: "ronin_bot" } } });
+  const DB = createFakeWhisperDb();
+  const env = { DB, TELEGRAM_BOT_TOKEN: "test-token" };
+  const draft = { token: "draft-token", chat_id: -100123, sender_user_id: 100, recipient_user_id: 200, mode: "text" };
+  const message = { from: { id: 100 }, chat: { id: 100 }, text: "رسالة واحدة فقط" };
+
+  await Promise.all([
+    finishWhisperDraft(env, draft, message),
+    finishWhisperDraft(env, draft, message),
+  ]);
+
+  const prompts = calls.filter((call) => call.method === "sendMessage"
+    && call.payload.text?.includes("وصلتك همسة خاصة"));
+  assert.equal(prompts.length, 1);
+  assert.equal(DB.draftStatus, "sent");
+  assert.ok(calls.some((call) => call.method === "sendMessage"
+    && call.payload.text?.includes("سبق استخدامه")));
+});
+
+test("failed whisper notification closes the draft instead of allowing duplicate retries", async (t) => {
+  const calls = mockTelegramApi(t, { results: { getMe: { id: 999, username: "ronin_bot" } } });
+  const normalFetch = globalThis.fetch;
+  let failPrompt = true;
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    if (method === "sendMessage" && payload.ephemeral_message_parameters && failPrompt) {
+      failPrompt = false;
+      calls.push({ method, payload });
+      return new Response(JSON.stringify({ ok: false, description: "simulated delivery failure" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return normalFetch(url, options);
+  };
+  const DB = createFakeWhisperDb();
+  await finishWhisperDraft(
+    { DB, TELEGRAM_BOT_TOKEN: "test-token" },
+    { token: "draft-token", chat_id: -100123, sender_user_id: 100, recipient_user_id: 200, mode: "text" },
+    { from: { id: 100 }, chat: { id: 100 }, text: "رسالة اختبار" },
+  );
+
+  assert.equal(DB.draftStatus, "failed");
+  assert.equal(DB.whisper.status, "failed");
+  assert.ok(calls.some((call) => call.method === "sendMessage"
+    && call.payload.text?.includes("ابدأ همسة جديدة")));
+});
+
+test("overlapping composing drafts are cancelled instead of choosing the newest recipient", async (t) => {
+  const calls = mockTelegramApi(t);
+  const drafts = [
+    { token: "draft-one", sender_user_id: 100, recipient_user_id: 200, status: "composing" },
+    { token: "draft-two", sender_user_id: 100, recipient_user_id: 300, status: "composing" },
+  ];
+  const DB = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async all() {
+          if (sql.includes("FROM whisper_drafts") && sql.includes("LIMIT 2")) {
+            return { results: drafts.filter((draft) => draft.sender_user_id === values[0]).slice(0, 2) };
+          }
+          throw new Error("Unexpected private-whisper test query: " + sql);
+        },
+        async run() {
+          if (sql.includes("UPDATE whisper_drafts SET status='failed'")) {
+            for (const draft of drafts) {
+              if (draft.sender_user_id === values[0] && draft.status === "composing") draft.status = "failed";
+            }
+            return { meta: { changes: 2 } };
+          }
+          throw new Error("Unexpected private-whisper test update: " + sql);
+        },
+      };
+    },
+  };
+
+  await handlePrivateWhisper(
+    { DB, TELEGRAM_BOT_TOKEN: "test-token" },
+    { from: { id: 100 }, chat: { id: 100 }, text: "لا ترسلها لأي مستلم" },
+  );
+
+  assert.deepEqual(drafts.map((draft) => draft.status), ["failed", "failed"]);
+  assert.ok(calls.some((call) => call.method === "sendMessage"
+    && call.payload.text?.includes("أكثر من محرر همسة مفتوح")));
 });
 
 test("opening a text whisper reveals it ephemerally and notifies the sender", async (t) => {

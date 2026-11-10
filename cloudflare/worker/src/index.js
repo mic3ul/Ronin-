@@ -383,29 +383,54 @@ export async function finishWhisperDraft(env,draft,message) {
     await sendText(env,message.chat.id,"يجب أن يكون Ronin مشرفاً في المجموعة حتى يرسل الهمسات الخاصة داخلها.");
     await env.DB.prepare("UPDATE whisper_drafts SET status='failed' WHERE token=?").bind(draft.token).run(); return true;
   }
-  const row=await env.DB.prepare("INSERT INTO whispers(sender_user_id,recipient_user_id,body) VALUES(?,?,?)")
-    .bind(draft.sender_user_id,draft.recipient_user_id,serializeWhisperContent(body,media)).run();
-  const id=Number(row.meta?.last_row_id);
-  if(!Number.isSafeInteger(id) || id < 1) throw new Error("Whisper insert did not return a valid id");
+
+  // Claim the draft before inserting a whisper so concurrent private updates cannot
+  // create multiple deliveries for the same one-time composition.
+  const claimed=await env.DB.prepare(
+    "UPDATE whisper_drafts SET status='sending' WHERE token=? AND sender_user_id=? AND status='composing' AND expires_at>CURRENT_TIMESTAMP"
+  ).bind(draft.token,draft.sender_user_id).run();
+  if(Number(claimed.meta?.changes||0)!==1) {
+    await sendText(env,message.chat.id,"هذا المحرر لم يعد نشطاً أو سبق استخدامه. ابدأ همسة جديدة من المجموعة.");
+    return true;
+  }
+
+  let id;
+  try {
+    const row=await env.DB.prepare("INSERT INTO whispers(sender_user_id,recipient_user_id,body) VALUES(?,?,?)")
+      .bind(draft.sender_user_id,draft.recipient_user_id,serializeWhisperContent(body,media)).run();
+    id=Number(row.meta?.last_row_id);
+    if(!Number.isSafeInteger(id) || id < 1) throw new Error("Whisper insert did not return a valid id");
+  } catch(error) {
+    await env.DB.prepare("UPDATE whisper_drafts SET status='composing' WHERE token=? AND status='sending'")
+      .bind(draft.token).run().catch(()=>null);
+    throw error;
+  }
+
   try {
     await telegram(env,"sendMessage",{
       chat_id:draft.chat_id,
-      text:"📩 <b>وصلتك همسة خاصة</b>\nاضغط الزر لعرضها. لن يظهر المحتوى لبقية أعضاء المجموعة.",
+      text:"📩 <b>وصلتك همسة خاصة</b>\\nاضغط الزر لعرضها. لن يظهر المحتوى لبقية أعضاء المجموعة.",
       parse_mode:"HTML",
       ephemeral_message_parameters:{receiver_user_id:draft.recipient_user_id},
       reply_markup:{inline_keyboard:[[{text:"✉️ فتح الهمسة",callback_data:"whisper_open:"+id}]]}
     });
-    await env.DB.prepare("UPDATE whisper_drafts SET status='sent' WHERE token=?").bind(draft.token).run();
-    await sendText(env,message.chat.id,"✅ تم إرسال تنبيه الهمسة للمستلم. سيظهر المحتوى عند فتحه.");
   } catch(error) {
     console.error("ephemeral whisper notification failed",error);
-    await env.DB.prepare("UPDATE whispers SET status='failed' WHERE id=?").bind(id).run();
-    await sendText(env,message.chat.id,"تعذر إيصال تنبيه الهمسة. حاول مجدداً.");
+    await env.DB.prepare("UPDATE whispers SET status='failed' WHERE id=?").bind(id).run().catch(()=>null);
+    await env.DB.prepare("UPDATE whisper_drafts SET status='failed' WHERE token=? AND status='sending'")
+      .bind(draft.token).run().catch(()=>null);
+    await sendText(env,message.chat.id,"تعذر إيصال تنبيه الهمسة. ابدأ همسة جديدة وحاول مجدداً.").catch(()=>null);
+    return true;
   }
+
+  await env.DB.prepare("UPDATE whisper_drafts SET status='sent' WHERE token=? AND status='sending'")
+    .bind(draft.token).run().catch((error)=>console.warn("whisper draft state update failed",error));
+  await sendText(env,message.chat.id,"✅ تم إرسال تنبيه الهمسة للمستلم. سيظهر المحتوى عند فتحه.")
+    .catch((error)=>console.warn("whisper sender confirmation failed",error));
   return true;
 }
-async function handlePrivateWhisper(env,message) {
-  const text=(message.text||"").trim(),start=text.match(/^\/start\s+w_([a-f0-9]{24})$/i);
+export async function handlePrivateWhisper(env,message) {
+  const text=(message.text||"").trim(),start=text.match(/^\\/start\\s+w_([a-f0-9]{24})$/i);
   if(start) {
     const draft=await env.DB.prepare("SELECT * FROM whisper_drafts WHERE token=? AND sender_user_id=? AND status='choosing' AND expires_at>CURRENT_TIMESTAMP").bind(start[1],message.from.id).first();
     if(!draft){await sendText(env,message.chat.id,"انتهت صلاحية محرر الهمسة. ابدأ من المجموعة مجدداً.");return true;}
@@ -413,9 +438,22 @@ async function handlePrivateWhisper(env,message) {
     await sendText(env,message.chat.id,"أرسل نص الهمسة أو الوسائط الآن. إذا اخترت الوسائط من المجموعة، أرسل الملف أو الصورة هنا.");
     return true;
   }
-  const draft=await env.DB.prepare("SELECT * FROM whisper_drafts WHERE sender_user_id=? AND status='composing' AND expires_at>CURRENT_TIMESTAMP ORDER BY created_at DESC LIMIT 1").bind(message.from.id).first();
-  if(!draft)return false;
-  return finishWhisperDraft(env,draft,message);
+  const active=await env.DB.prepare(
+    "SELECT * FROM whisper_drafts WHERE sender_user_id=? AND status IN ('composing','sending') AND expires_at>CURRENT_TIMESTAMP ORDER BY created_at DESC LIMIT 2"
+  ).bind(message.from.id).all();
+  const drafts=active.results||[];
+  if(drafts.length===0)return false;
+  if(drafts.length>1) {
+    await env.DB.prepare("UPDATE whisper_drafts SET status='failed' WHERE sender_user_id=? AND status='composing'")
+      .bind(message.from.id).run();
+    await sendText(env,message.chat.id,"لديك أكثر من محرر همسة مفتوح أو عملية إرسال جارية. ألغيت المسودات المتداخلة لتجنب إرسال المحتوى إلى مستلم غير مقصود. ابدأ همسة واحدة جديدة من المجموعة.");
+    return true;
+  }
+  if(drafts[0].status==="sending") {
+    await sendText(env,message.chat.id,"هناك همسة قيد الإرسال بالفعل. انتظر تأكيدها قبل إرسال محتوى آخر.");
+    return true;
+  }
+  return finishWhisperDraft(env,drafts[0],message);
 }
 
 async function handleNewCallback(env, callback) {
