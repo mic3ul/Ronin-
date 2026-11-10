@@ -409,7 +409,7 @@ export async function finishWhisperDraft(env,draft,message) {
   try {
     await telegram(env,"sendMessage",{
       chat_id:draft.chat_id,
-      text:"📩 <b>وصلتك همسة خاصة</b>\\nاضغط الزر لعرضها. لن يظهر المحتوى لبقية أعضاء المجموعة.",
+      text:"📩 <b>وصلتك همسة خاصة</b>\nاضغط الزر لعرضها. لن يظهر المحتوى لبقية أعضاء المجموعة.",
       parse_mode:"HTML",
       ephemeral_message_parameters:{receiver_user_id:draft.recipient_user_id},
       reply_markup:{inline_keyboard:[[{text:"✉️ فتح الهمسة",callback_data:"whisper_open:"+id}]]}
@@ -430,7 +430,7 @@ export async function finishWhisperDraft(env,draft,message) {
   return true;
 }
 export async function handlePrivateWhisper(env,message) {
-  const text=(message.text||"").trim(),start=text.match(/^\\/start\\s+w_([a-f0-9]{24})$/i);
+  const text=(message.text||"").trim(),start=text.match(/^\/start\s+w_([a-f0-9]{24})$/i);
   if(start) {
     const draft=await env.DB.prepare("SELECT * FROM whisper_drafts WHERE token=? AND sender_user_id=? AND status='choosing' AND expires_at>CURRENT_TIMESTAMP").bind(start[1],message.from.id).first();
     if(!draft){await sendText(env,message.chat.id,"انتهت صلاحية محرر الهمسة. ابدأ من المجموعة مجدداً.");return true;}
