@@ -233,6 +233,24 @@ test("failed report deletion leaves the report open for a safe retry", async (t)
   assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
 });
 
+test("a confirmed report ban is not repeated when message deletion fails", async (t) => {
+  const calls = mockTelegramApi(t, { results: { deleteMessage: false } });
+  const DB = createFakeReportDb();
+  const callback = reportCallback("report_ban|-100|55|42");
+
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, callback);
+
+  assert.equal(DB.report.status, "banned");
+  assert.equal(calls.filter((call) => call.method === "banChatMember").length, 1);
+  assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"
+    && call.payload.text.includes("لن نكرر الحظر")));
+
+  // A second click must not issue the already-confirmed ban again.
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, callback);
+  assert.equal(calls.filter((call) => call.method === "banChatMember").length, 1);
+});
+
 test("report dismissal is stored and cannot be repeated", async (t) => {
   const calls = mockTelegramApi(t);
   const DB = createFakeReportDb();
