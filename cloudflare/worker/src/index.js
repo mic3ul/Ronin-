@@ -142,7 +142,7 @@ export function buildMusicKeyboardRows(tracks, provider) {
 
 async function searchMusic(env, chatId, query) {
   const clean = String(query || "").trim().slice(0, 100);
-  if (!clean) { await sendText(env, chatId, "اكتب اسم الأغنية بعد /يوت. مثال: /يوت Naruto Blue Bird"); return; }
+  if (!clean) { await sendText(env, chatId, "اكتب اسم الأغنية بعد «يوت». مثال: يوت Naruto Blue Bird"); return; }
   let tracks = [], provider = "apple", failures = [];
   try {
     const response = await fetch("https://itunes.apple.com/search?term=" + encodeURIComponent(clean) + "&entity=song&limit=6&country=US", { headers: { "accept": "application/json" }, signal: AbortSignal.timeout(9000) });
@@ -164,6 +164,26 @@ async function searchMusic(env, chatId, query) {
   const rows = buildMusicKeyboardRows(tracks, provider);
   await sendText(env, chatId, "🎵 <b>نتائج البحث عن:</b> " + escapeHtml(clean) + "\nاختر مقطعاً لفتح معاينة قصيرة:", { reply_markup: { inline_keyboard: rows } });
 }
+async function sendMusicAudio(env, chatId, preview, title, performer, page, provider) {
+  try {
+    await telegram(env, "sendAudio", {
+      chat_id: chatId, audio: preview, title: String(title || "مقطع موسيقي").slice(0, 64),
+      performer: String(performer || "").slice(0, 64),
+      caption: "🎵 <b>" + escapeHtml(title || "مقطع موسيقي") + "</b>\n" +
+        escapeHtml(performer || "") + "\n<code>Done : @RoninBot</code>",
+      parse_mode: "HTML"
+    });
+  } catch (error) {
+    console.warn("Telegram could not fetch music preview; sending links instead", error);
+    await sendText(env, chatId,
+      "🎵 <b>" + escapeHtml(title || "مقطع موسيقي") + "</b>\n" + escapeHtml(performer || "") +
+      "\nتعذر تشغيل الملف مباشرة؛ يمكنك فتح المعاينة من المصدر.",
+      { reply_markup: { inline_keyboard: [[
+        { text: "▶️ استمع للمعاينة", url: preview },
+        { text: provider === "apple" ? " Apple Music" : "فتح Deezer", url: page }
+      ]] } });
+  }
+}
 async function sendMusicPreview(env, callback, trackId) {
   const response = await fetch("https://itunes.apple.com/lookup?id=" + encodeURIComponent(trackId) + "&country=US");
   if (!response.ok) throw new Error("Music lookup unavailable");
@@ -173,13 +193,8 @@ async function sendMusicPreview(env, callback, trackId) {
     await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "المعاينة غير متاحة لهذا المقطع.", show_alert: true });
     return;
   }
-  await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "جهزت روابط المقطع." });
-  await sendText(env, callback.message.chat.id,
-    "🎵 <b>" + escapeHtml(track.trackName) + "</b>\n" + escapeHtml(track.artistName) + "\nمعاينة رسمية قصيرة من Apple — اضغط للاستماع عبر البث، أو افتح صفحة المقطع.",
-    { reply_markup: { inline_keyboard: [[
-      { text: "▶️ استمع للمعاينة", url: track.previewUrl },
-      { text: " فتح في Apple Music", url: track.trackViewUrl }
-    ]] } });
+  await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "🎵 جارٍ تجهيز المشغل." });
+  await sendMusicAudio(env, callback.message.chat.id, track.previewUrl, track.trackName, track.artistName, track.trackViewUrl, "apple");
 }
 async function sendText(env, chatId, text, extra = {}) {
   return telegram(env, "sendMessage", Object.assign({ chat_id: chatId, text, parse_mode: "HTML" }, extra));
@@ -473,8 +488,8 @@ async function handleNewCallback(env, callback) {
       if(!response.ok) throw new Error("Deezer lookup HTTP "+response.status);
       const track=await response.json();
       if(!track.preview||!track.link) throw new Error("Preview unavailable");
-      await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"جهزت المعاينة."});
-      await sendText(env,callback.message.chat.id,"🎵 <b>"+escapeHtml(track.title||"مقطع موسيقي")+"</b>\n"+escapeHtml(track.artist?.name||"")+"\nمعاينة قصيرة من Deezer.",{reply_markup:{inline_keyboard:[[{text:"▶️ استمع للمعاينة",url:track.preview},{text:"فتح Deezer",url:track.link}]]}});
+      await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"🎵 جارٍ تجهيز المشغل."});
+      await sendMusicAudio(env,callback.message.chat.id,track.preview,track.title,track.artist?.name,track.link,"deezer");
     } catch(error){console.error("Deezer preview failed",error);await telegram(env,"answerCallbackQuery",{callback_query_id:callback.id,text:"تعذر جلب المعاينة.",show_alert:true});}
     return true;
   }
@@ -690,6 +705,31 @@ async function handleNewCallback(env, callback) {
 
 async function handleCommands(env, message, member) {
   const text = getText(message).trim();
+  const firstWord = (text.split(/\\s+/)[0] || "").replace(/^[/!]+/, "").replace(/@[^@]+$/, "").toLowerCase();
+  const rest = text.replace(/^\\S+\\s*/, "").trim();
+  if (/^(?:ronin|رونين)$/i.test(firstWord)) {
+    if (!rest) { await sendCategoryHome(env, message.chat.id); return true; }
+    const routed = await handleCommands(env, { ...message, text: rest }, member);
+    if (!routed) await sendCategoryHome(env, message.chat.id);
+    return true;
+  }
+  const aliases = {
+    "يوت":"/يوت", "yt":"/yt", "music":"/music", "موسيقى":"/يوت",
+    "همسة":"/همسة", "whisper":"/whisper", "العاب":"/العاب", "ألعاب":"/العاب", "games":"/games",
+    "سؤال":"/سؤال", "quiz":"/quiz", "سيارات":"/سيارات", "cars":"/cars",
+    "صراحة":"/صراحة", "truth":"/truth", "هذا_ام_ذاك":"/هذا_ام_ذاك", "wyr":"/wyr",
+    "عملة":"/عملة", "coin":"/coin", "حجر":"/حجر", "rps":"/rps",
+    "حضور":"/حضور", "checkin":"/checkin", "ملفي":"/ملفي", "profile":"/profile",
+    "المتصدرين":"/المتصدرين", "top":"/top", "مساعدة":"/مساعدة", "help":"/help",
+    "القوانين":"/القوانين", "rules":"/rules", "ايدي":"/ايدي", "id":"/id",
+    "رتب":"/رتب", "الرتب":"/الرتب", "بلاغ":"/بلاغ", "report":"/report",
+    "ping":"/ping", "اضف_رفيق":"/اضف_رفيق", "رفع_رفيق":"/رفع_رفيق",
+    "اضف_ثائر":"/اضف_ثائر", "اضف_مجاهد":"/اضف_مجاهد", "اضف_مناضل":"/اضف_مناضل",
+    "اضف_مناصر":"/اضف_مناصر", "ازالة_رتبة":"/ازالة_رتبة",
+    "حظر":"/حظر", "فك_الحظر":"/فك_الحظر", "كتم":"/كتم", "رفع":"/رفع", "تقييد":"/تقييد"
+  };
+  const canonical = aliases[firstWord] || (text.split(/\\s+/)[0] || "").toLowerCase();
+  const normalizedText = canonical + (rest ? " " + rest : "");
   const buttonCommands = {
     "🎮 الألعاب": "/العاب", "👤 ملفي": "/ملفي", "🏆 المتصدرون": "/المتصدرين",
     "🧠 سؤال": "/سؤال", "🚘 سيارات": "/سيارات", "🎭 صراحة": "/صراحة",
