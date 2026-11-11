@@ -696,3 +696,44 @@ test("callback acknowledgement failure does not reopen an already delivered whis
   assert.equal(calls.filter((call) => call.method === "sendMessage"
     && call.payload.ephemeral_message_parameters?.callback_query_id).length, 1);
 });
+
+test("a delivered whisper stays locked when D1 cannot commit its opened state", async (t) => {
+  const calls = mockTelegramApi(t);
+  const DB = createFakeWhisperDb({
+    id: 42,
+    sender_user_id: 100,
+    recipient_user_id: 200,
+    body: JSON.stringify({ version: 1, text: "تم تسليمها مرة واحدة", media: null }),
+    status: "pending",
+  });
+  const originalPrepare = DB.prepare.bind(DB);
+  DB.prepare = (sql) => {
+    const statement = originalPrepare(sql);
+    if (!sql.includes("UPDATE whispers SET status='opened'")) return statement;
+    return {
+      bind(...values) {
+        statement.bind(...values);
+        return {
+          async run() {
+            throw new Error("simulated D1 finalization failure");
+          },
+        };
+      },
+    };
+  };
+
+  const env = { DB, TELEGRAM_BOT_TOKEN: "test-token" };
+  await handleCallback(env, whisperOpenCallback());
+
+  const deliveries = () => calls.filter((call) => call.method === "sendMessage"
+    && call.payload.ephemeral_message_parameters?.callback_query_id === "whisper-open-callback");
+  assert.equal(deliveries().length, 1);
+  assert.equal(DB.whisper.status, "opening");
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"
+    && call.payload.text.includes("لن نعيد إرسالها تلقائياً")));
+
+  // A second callback cannot claim an indeterminate opening and deliver the secret again.
+  await handleCallback(env, whisperOpenCallback());
+  assert.equal(deliveries().length, 1);
+  assert.equal(DB.whisper.status, "opening");
+});

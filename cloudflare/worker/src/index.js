@@ -544,6 +544,9 @@ async function handleNewCallback(env, callback) {
       ephemeral_message_parameters: { receiver_user_id: callback.from.id }
     };
     const replyMarkup = { inline_keyboard: [[{ text: "↩️ رد على الهمسة", callback_data: "whisper_reply:" + id }]] };
+    // Keep Telegram delivery separate from the D1 state commit. Once Telegram has
+    // delivered the ephemeral content, a database failure must not unlock the whisper
+    // for another delivery: the outcome is indeterminate and should fail closed.
     try {
       const messageText = "💌 <b>همستك:</b>\n" + escapeHtml(content.text);
       if (content.media) {
@@ -557,12 +560,36 @@ async function handleNewCallback(env, callback) {
       } else {
         await telegram(env, "sendMessage", { ...callbackDelivery, text: messageText, parse_mode: "HTML", reply_markup: replyMarkup });
       }
-      const opened = await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='opening'").bind(id).run();
-      if (Number(opened.meta?.changes || 0) !== 1) throw new Error("Whisper state changed before delivery could be finalized");
-    } catch (error) {
+    } catch (deliveryError) {
       await env.DB.prepare("UPDATE whispers SET status='pending' WHERE id=? AND status='opening'").bind(id).run().catch(() => null);
-      console.error("Whisper open delivery failed", error);
-      await telegram(env, "answerCallbackQuery", { callback_query_id: callback.id, text: "تعذر فتح الهمسة. حاول مجدداً.", show_alert: true });
+      console.error("Whisper open delivery failed", deliveryError);
+      await telegram(env, "answerCallbackQuery", {
+        callback_query_id: callback.id,
+        text: "تعذر فتح الهمسة. حاول مجدداً.",
+        show_alert: true
+      }).catch(() => null);
+      return true;
+    }
+
+    let opened;
+    try {
+      opened = await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='opening'").bind(id).run();
+    } catch (stateError) {
+      console.error("Whisper was delivered but its opened state could not be saved", stateError);
+      await telegram(env, "answerCallbackQuery", {
+        callback_query_id: callback.id,
+        text: "وصلت الهمسة، لكن تعذر حفظ حالة الفتح. لن نعيد إرسالها تلقائياً لتجنب التكرار؛ تواصل مع مشرف المجموعة.",
+        show_alert: true
+      }).catch(() => null);
+      return true;
+    }
+    if (Number(opened.meta?.changes || 0) !== 1) {
+      console.error("Whisper was delivered but its opened state update affected no row");
+      await telegram(env, "answerCallbackQuery", {
+        callback_query_id: callback.id,
+        text: "وصلت الهمسة، لكن تعذر تأكيد حالتها. لن نعيد إرسالها تلقائياً؛ تواصل مع مشرف المجموعة.",
+        show_alert: true
+      }).catch(() => null);
       return true;
     }
     // The content is already delivered and the state is committed; a callback-answer
