@@ -705,8 +705,8 @@ async function handleNewCallback(env, callback) {
 
 async function handleCommands(env, message, member) {
   const text = getText(message).trim();
-  const firstWord = (text.split(/\\s+/)[0] || "").replace(/^[/!]+/, "").replace(/@[^@]+$/, "").toLowerCase();
-  const rest = text.replace(/^\\S+\\s*/, "").trim();
+  const firstWord = (text.split(/\s+/)[0] || "").replace(/^[/!]+/, "").replace(/@[^@]+$/, "").toLowerCase();
+  const rest = text.replace(/^\S+\s*/, "").trim();
   if (/^(?:ronin|رونين)$/i.test(firstWord)) {
     if (!rest) { await sendCategoryHome(env, message.chat.id); return true; }
     const routed = await handleCommands(env, { ...message, text: rest }, member);
@@ -728,7 +728,7 @@ async function handleCommands(env, message, member) {
     "اضف_مناصر":"/اضف_مناصر", "ازالة_رتبة":"/ازالة_رتبة", "رتب":"/رتب", "الرتب":"/الرتب", "همسة_مساعدة":"/همسة_مساعدة",
     "حظر":"/حظر", "ban":"/ban", "فك_الحظر":"/فك_الحظر", "unban":"/unban", "كتم":"/كتم", "mute":"/mute", "رفع":"/رفع", "unmute":"/رفع", "الغاء_كتم":"/الغاء_كتم", "تقييد":"/تقييد", "restrict":"/restrict"
   };
-  const canonical = aliases[firstWord] || (text.split(/\\s+/)[0] || "").toLowerCase();
+  const canonical = aliases[firstWord] || (text.split(/\s+/)[0] || "").toLowerCase();
   const normalizedText = canonical + (rest ? " " + rest : "");
   const buttonCommands = {
     "🎮 الألعاب": "/العاب", "👤 ملفي": "/ملفي", "🏆 المتصدرون": "/المتصدرين",
@@ -738,7 +738,7 @@ async function handleCommands(env, message, member) {
     "📩 همسة": "/whisper", "🎵 موسيقى": "/يوت", "📋 القوانين": "/القوانين", "🚨 بلاغ": "/بلاغ"
   };
   if (/^همسة(?:\s|$)/i.test(text) || /^\/whisper(?:@\w+)?(?:\s|$)/i.test(text) || /^\/همسة(?:\s|$)/i.test(text)) return handleWhisper(env, message, text);
-  const command = buttonCommands[text] || (text.split(/\s+/)[0] || "").split("@")[0].toLowerCase();
+  const command = buttonCommands[text] || canonical;
   const chatId = message.chat.id;
   const rankCommands = {
     "/اضف_رفيق":"rafiq", "/رفع_رفيق":"rafiq", "/اضف_ثائر":"thaer", "/اضف_مجاهد":"mujahid",
