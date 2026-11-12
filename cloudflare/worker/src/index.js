@@ -40,6 +40,13 @@ function parseIds(value) {
 }
 function isGroup(chat) { return chat && (chat.type === "group" || chat.type === "supergroup"); }
 function getText(message) { return message.text || message.caption || ""; }
+export function normalizeCommandToken(token) {
+  return String(token ?? "").replace(/@[^@]+$/, "").toLowerCase();
+}
+export function extractMusicQuery(normalizedText, buttonCommand = null) {
+  const commandText = buttonCommand || normalizedText || "";
+  return String(commandText).replace(/^(?:\/يوت|\/yt|\/music)\s*/i, "").trim();
+}
 function isMedia(message) { return ["photo", "video", "document", "audio", "voice", "video_note", "animation", "sticker"].some((key) => Boolean(message[key])); }
 function containsLink(message, text) {
   const entities = (message.entities || []).concat(message.caption_entities || []);
@@ -728,7 +735,8 @@ async function handleCommands(env, message, member) {
     "اضف_مناصر":"/اضف_مناصر", "ازالة_رتبة":"/ازالة_رتبة", "رتب":"/رتب", "الرتب":"/الرتب", "همسة_مساعدة":"/همسة_مساعدة",
     "حظر":"/حظر", "ban":"/ban", "فك_الحظر":"/فك_الحظر", "unban":"/unban", "كتم":"/كتم", "mute":"/mute", "رفع":"/رفع", "unmute":"/رفع", "الغاء_كتم":"/الغاء_كتم", "تقييد":"/تقييد", "restrict":"/restrict"
   };
-  const canonical = aliases[firstWord] || (text.split(/\s+/)[0] || "").toLowerCase();
+  const rawCommand = text.split(/\s+/)[0] || "";
+  const canonical = aliases[firstWord] || normalizeCommandToken(rawCommand);
   const normalizedText = canonical + (rest ? " " + rest : "");
   const buttonCommands = {
     "🎮 الألعاب": "/العاب", "👤 ملفي": "/ملفي", "🏆 المتصدرون": "/المتصدرين",
@@ -845,7 +853,7 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/يوت", "/yt", "/music"].includes(command)) {
-    const query = text.replace(/^(?:\/يوت|\/yt|\/music)(?:@\w+)?\s*/i, "").trim();
+    const query = extractMusicQuery(normalizedText, buttonCommands[text]);
     try { await searchMusic(env, chatId, query); }
     catch (error) { console.error("Music search failed", error); await sendText(env, chatId, "تعذر البحث الموسيقي الآن. حاول بعد قليل."); }
     return true;
