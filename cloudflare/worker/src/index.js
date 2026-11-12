@@ -45,7 +45,7 @@ export function normalizeCommandToken(token) {
 }
 export function extractMusicQuery(normalizedText, buttonCommand = null) {
   const commandText = buttonCommand || normalizedText || "";
-  return String(commandText).replace(/^(?:\/يوت|\/yt|\/music)\s*/i, "").trim();
+  return String(commandText).replace(/^(?:\/يوت|\/yt|\/music)(?:@\w+)?\s*/i, "").trim();
 }
 function isMedia(message) { return ["photo", "video", "document", "audio", "voice", "video_note", "animation", "sticker"].some((key) => Boolean(message[key])); }
 function containsLink(message, text) {
