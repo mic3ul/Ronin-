@@ -68,8 +68,15 @@ From `cloudflare/worker`:
 npx wrangler d1 migrations apply ronin-db --remote
 ```
 
-This applies only the checked-in migration. It does not run the repository's
-legacy `db_init.py` (which is destructive) and does not touch another D1 DB.
+This applies every unapplied SQL file discovered in `migrations_dir`, in
+Wrangler's migration order, and records each applied filename in the
+`d1_migrations` table. It does not run the repository's legacy `db_init.py`
+(which is destructive) and does not touch another D1 DB.
+
+Before applying migrations to an existing database, export a backup and
+reconcile its live schema with the complete migration sequence. Existing
+`CREATE TABLE IF NOT EXISTS` objects do not mean Wrangler has recorded those
+migrations; do not assume an existing schema is already baselined.
 
 ### 2. Configure secrets
 
