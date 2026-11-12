@@ -1,6 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildMusicKeyboardRows, duplicateFingerprint, finishWhisperDraft, formatReportMessage, getProfileLevel, handleCallback, handlePrivateWhisper, isDrugSpam, isRepeatedMessage, normalizeMusicTracks, safeEqual } from "../src/index.js";
+import worker, { buildMusicKeyboardRows, duplicateFingerprint, extractMusicQuery, finishWhisperDraft, formatReportMessage, getProfileLevel, handleCallback, handlePrivateWhisper, isDrugSpam, isRepeatedMessage, normalizeCommandToken, normalizeMusicTracks, safeEqual } from "../src/index.js";
+test("command normalization strips Telegram bot mentions without losing command prefixes", () => {
+  assert.equal(normalizeCommandToken("/help@RoninBot"), "/help");
+  assert.equal(normalizeCommandToken("!mute@RoninBot"), "!mute");
+  assert.equal(normalizeCommandToken("/مساعدة@RoninBot"), "/مساعدة");
+  assert.equal(normalizeCommandToken("/help"), "/help");
+});
+
+test("music query extraction supports natural aliases, bot mentions, and keyboard prompts", () => {
+  assert.equal(extractMusicQuery("/yt Drake"), "Drake");
+  assert.equal(extractMusicQuery("/music Song title"), "Song title");
+  assert.equal(extractMusicQuery("/يوت أغنية عربية"), "أغنية عربية");
+  assert.equal(extractMusicQuery("/yt@RoninBot Radiohead"), "Radiohead");
+  assert.equal(extractMusicQuery("/يوت", "/يوت"), "");
+});
+
 
 test("Arabic report summaries escape untrusted group, member, and message text", () => {
   const report = formatReportMessage(
