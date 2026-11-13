@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildMusicKeyboardRows, duplicateFingerprint, extractMusicQuery, finishWhisperDraft, formatReportMessage, getProfileLevel, handleCallback, handlePrivateWhisper, isDrugSpam, isRepeatedMessage, normalizeCommandToken, normalizeMusicTracks, safeEqual } from "../src/index.js";
+import worker, { buildMusicKeyboardRows, duplicateFingerprint, extractMusicQuery, finishWhisperDraft, formatModerationFailureMessage, formatReportMessage, getProfileLevel, handleCallback, handlePrivateWhisper, isDrugSpam, isRepeatedMessage, normalizeCommandToken, normalizeMusicTracks, safeEqual, WHISPER_HELP_TEXT } from "../src/index.js";
 test("command normalization strips Telegram bot mentions without losing command prefixes", () => {
   assert.equal(normalizeCommandToken("/help@RoninBot"), "/help");
   assert.equal(normalizeCommandToken("!mute@RoninBot"), "!mute");
@@ -14,6 +14,22 @@ test("music query extraction supports natural aliases, bot mentions, and keyboar
   assert.equal(extractMusicQuery("/يوت أغنية عربية"), "أغنية عربية");
   assert.equal(extractMusicQuery("/yt@RoninBot Radiohead"), "Radiohead");
   assert.equal(extractMusicQuery("/يوت", "/يوت"), "");
+});
+
+test("moderation failure messages escape HTML and use a real line break", () => {
+  const message = formatModerationFailureMessage(new Error("<denied>"));
+  assert.ok(message.includes("&lt;denied&gt;"));
+  assert.equal(message.split("\n").length, 2);
+  assert.equal(message.includes("\\n"), false);
+});
+
+test("whisper help describes the private composer and recipient-only reveal flow", () => {
+  assert.ok(WHISPER_HELP_TEXT.includes("فتح المحرر"));
+  assert.ok(WHISPER_HELP_TEXT.includes("المستلم قد بدأ البوت"));
+  assert.ok(WHISPER_HELP_TEXT.includes("لا تكتب محتوى الهمسة بعد الأمر داخل المجموعة"));
+  assert.ok(WHISPER_HELP_TEXT.includes("لا يظهر محتوى الهمسة في المجموعة"));
+  assert.equal(WHISPER_HELP_TEXT.includes("سيحذف رونين رسالة الأمر من المجموعة ويرسل النص إلى الخاص"), false);
+  assert.equal(WHISPER_HELP_TEXT.includes("همسة النص الذي تريد إرساله"), false);
 });
 
 
