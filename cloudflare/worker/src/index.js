@@ -22,6 +22,20 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"]/g, (char) => char === "&" ? "&amp;" : char === "<" ? "&lt;" : char === ">" ? "&gt;" : "&quot;");
 }
 
+export function formatModerationFailureMessage(error) {
+  const detail = escapeHtml(String(error?.message ?? error ?? "خطأ غير معروف").slice(0, 220));
+  return "تعذر تنفيذ الأمر: " + detail + "\nتأكد أن رونين مشرف ويملك صلاحية تقييد الأعضاء.";
+}
+
+export const WHISPER_HELP_TEXT = [
+  "✉️ <b>طريقة إرسال همسة</b>",
+  "1. اعمل رداً على رسالة المستلم واكتب <code>همسة</code>، أو استخدم <code>/whisper @username</code> إذا كان المستلم قد بدأ البوت في الخاص سابقاً.",
+  "2. اختر نصاً أو وسائط، ثم اضغط «فتح المحرر» في الرسالة التي تظهر لك وحدك داخل المجموعة.",
+  "3. افتح محادثة رونين الخاصة واضغط Start إذا طلب Telegram ذلك، ثم أرسل محتوى الهمسة هناك.",
+  "4. يتلقى المستلم زر فتح فقط؛ لا يظهر محتوى الهمسة في المجموعة قبل أن يفتحه بنفسه.",
+  "لا تكتب محتوى الهمسة بعد الأمر داخل المجموعة."
+].join("\n");
+
 export function formatReportMessage(chat, target, reporter, text) {
   const chatName = escapeHtml(chat?.title || chat?.id || "مجموعة");
   const targetName = escapeHtml(target?.first_name || "عضو");
@@ -804,7 +818,7 @@ async function handleCommands(env, message, member) {
       await sendText(env,chatId,"تم تنفيذ <b>"+labels[action]+"</b> على العضو.");
     } catch(error) {
       console.error("Ronin moderation action failed",error);
-      await sendText(env,chatId,"تعذر تنفيذ الأمر: "+escapeHtml(String(error?.message||"خطأ غير معروف").slice(0,220))+"\\nتأكد أن Ronin مشرف ويملك صلاحية تقييد الأعضاء.");
+      await sendText(env, chatId, formatModerationFailureMessage(error));
     }
     return true;
   }
@@ -849,7 +863,7 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/whisper_help", "/همسة_مساعدة"].includes(command)) {
-    await sendText(env, chatId, "✉️ <b>طريقة إرسال همسة</b>\nاعمل رد على رسالة الشخص ثم اكتب:\n<code>همسة النص الذي تريد إرساله</code>\nسيحذف رونين رسالة الأمر من المجموعة ويرسل النص إلى الخاص. يجب أن يكون الشخص قد فتح البوت وأرسل /start.\nويمكنك أيضاً استخدام: <code>/همسة @username النص</code>.");
+    await sendText(env, chatId, WHISPER_HELP_TEXT);
     return true;
   }
   if (["/يوت", "/yt", "/music"].includes(command)) {
