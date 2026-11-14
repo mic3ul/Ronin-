@@ -32,12 +32,12 @@ def format_duration(seconds: int | float | None) -> str:
 
 
 def is_youtube_url(url: str) -> bool:
-    """Accept HTTPS URLs on an exact YouTube host and the default HTTPS port."""
+    """Accept HTTPS URLs on an exact first-party YouTube host and the default port."""
     try:
         parsed = urlsplit(url)
         return (
             parsed.scheme == "https"
-            and parsed.hostname in {"youtube.com", "www.youtube.com"}
+            and parsed.hostname in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
             and parsed.port in (None, 443)
             and parsed.username is None
             and parsed.password is None
