@@ -38,6 +38,9 @@ def test_duration_formatting(seconds, expected):
         "https://www.youtube.com/watch?v=abc",
         "https://youtube.com/watch?v=abc",
         "https://www.youtube.com:443/watch?v=abc",
+        "https://youtu.be/abc123",
+        "https://m.youtube.com/watch?v=abc",
+        "https://music.youtube.com/watch?v=abc",
     ],
 )
 def test_accepts_real_youtube_hosts(url):
@@ -53,6 +56,8 @@ def test_accepts_real_youtube_hosts(url):
         "https://youtube.com.evil.example/watch?v=abc",
         "https://notyoutube.com/watch?v=abc",
         "https://www.youtube.com@evil.example/watch?v=abc",
+        "https://youtu.be.evil.example/abc123",
+        "https://m.youtube.com.evil.example/watch?v=abc",
         "javascript://youtube.com/watch?v=abc",
     ],
 )
