@@ -109,6 +109,11 @@ Whispers use Telegram ephemeral messages in the originating group: only the reci
 
 The initial configuration intentionally leaves `MAIN_GROUP_IDS` empty and
 autoban disabled so a fresh deployment cannot moderate an unintended group.
+Only groups listed in `MAIN_GROUP_IDS` are eligible for registration and
+moderation. Add the group ID to the Worker variable before adding Ronin to the
+group. If Ronin was already added while the group was not allowlisted, remove
+and re-add it after configuring the ID so Telegram sends a fresh membership
+update. A previously active D1 row does not override the environment allowlist.
 
 Apply all checked-in migrations, including `0002_social_games_whispers.sql`, `0003_daily_checkins.sql`, and `0004_group_leaderboard.sql`, before deploying the updated Worker. These migrations are additive and do not delete existing data.
 
