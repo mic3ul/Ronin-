@@ -52,6 +52,9 @@ function parseIds(value) {
   try { const parsed = JSON.parse(value || "[]"); return new Set(Array.isArray(parsed) ? parsed.map(Number).filter(Number.isSafeInteger) : []); }
   catch { return new Set(); }
 }
+export function isConfiguredGroup(env, chatId) {
+  return parseIds(env?.MAIN_GROUP_IDS).has(Number(chatId));
+}
 function isGroup(chat) { return chat && (chat.type === "group" || chat.type === "supergroup"); }
 function getText(message) { return message.text || message.caption || ""; }
 export function normalizeCommandToken(token) {
@@ -1121,8 +1124,8 @@ export async function isRepeatedMessage(env, message) {
   ).bind(chatId, fingerprint, messageId).run();
   return Number(result.meta && result.meta.changes || 0) === 0;
 }
-async function handleMessage(env, message, edited = false) {
-  if (!message || !isGroup(message.chat)) return;
+export async function handleMessage(env, message, edited = false) {
+  if (!message || !isGroup(message.chat) || !isConfiguredGroup(env, message.chat.id)) return;
   if (!edited && message.new_chat_members?.length) {
     const bot = await telegram(env,"getMe",{});
     if (message.new_chat_members.some((member) => member.id === bot.id)) {
@@ -1180,20 +1183,21 @@ async function handleMessage(env, message, edited = false) {
   member = await getMember(env.DB, userId);
   if (!edited && member) await checkBurst(env, env.DB, message, member).catch(() => null);
 }
-async function processUpdate(update, env) {
+export async function processUpdate(update, env) {
   if (update.my_chat_member && isGroup(update.my_chat_member.chat)) {
     const change = update.my_chat_member;
     const status = change.new_chat_member?.status;
     const isActive = status === "member" || status === "administrator" ||
       (status === "restricted" && change.new_chat_member?.is_member === true);
-    if (isActive) {
+    const configured = isConfiguredGroup(env, change.chat.id);
+    if (isActive && configured) {
       await env.DB.prepare("INSERT INTO allowed_groups (chat_id, title, active) VALUES (?, ?, 1) ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title, active=1, updated_at=CURRENT_TIMESTAMP")
         .bind(change.chat.id, change.chat.title || "").run();
       const oldStatus = change.old_chat_member?.status;
       const wasActive = oldStatus === "member" || oldStatus === "administrator" ||
         (oldStatus === "restricted" && change.old_chat_member?.is_member === true);
       if (!wasActive) await sendRoninWelcome(env, change.chat.id, true);
-    } else if (status === "left" || status === "kicked") {
+    } else if (status === "left" || status === "kicked" || (isActive && !configured)) {
       await env.DB.prepare("UPDATE allowed_groups SET active=0, updated_at=CURRENT_TIMESTAMP WHERE chat_id=?").bind(change.chat.id).run();
     }
   }
