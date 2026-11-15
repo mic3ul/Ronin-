@@ -1036,12 +1036,14 @@ export async function handleCallback(env, callback) {
   }
 
   let banSucceeded = false;
+  let deleteSucceeded = false;
   try {
     if (action === "report_ban") {
       await telegramConfirmed(env, "banChatMember", { chat_id: chatId, user_id: userId });
       banSucceeded = true;
     }
     await telegramConfirmed(env, "deleteMessage", { chat_id: chatId, message_id: messageId });
+    deleteSucceeded = true;
     await env.DB.prepare(
       "UPDATE reports SET status = ? WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
     ).bind(action === "report_ban" ? "banned" : "resolved", reportChatId, reportMessageId).run();
@@ -1052,7 +1054,7 @@ export async function handleCallback(env, callback) {
   } catch (error) {
     // Do not reopen a report after Telegram has confirmed the ban: retrying the
     // callback must not repeat a completed moderation action.
-    const recoveryStatus = banSucceeded ? "banned" : "open";
+    const recoveryStatus = banSucceeded ? "banned" : deleteSucceeded ? "resolved" : "open";
     await env.DB.prepare(
       "UPDATE reports SET status = ? WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
     ).bind(recoveryStatus, reportChatId, reportMessageId).run().catch(() => null);
@@ -1060,7 +1062,9 @@ export async function handleCallback(env, callback) {
       callback_query_id: callback.id,
       text: banSucceeded
         ? "تم حظر العضو، لكن تعذر حذف الرسالة. لن نكرر الحظر؛ احذف الرسالة يدوياً."
-        : "تعذر تنفيذ الإجراء. تحقق من صلاحيات البوت وحاول مجدداً.",
+        : deleteSucceeded
+          ? "حُذفت الرسالة، لكن تعذر حفظ حالة البلاغ. لن نكرر الحذف."
+          : "تعذر تنفيذ الإجراء. تحقق من صلاحيات البوت وحاول مجدداً.",
       show_alert: true,
     }).catch(() => null);
     console.error("Ronin report action failed", error);
