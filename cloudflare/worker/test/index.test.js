@@ -1,6 +1,47 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildMusicKeyboardRows, duplicateFingerprint, extractMusicQuery, finishWhisperDraft, formatModerationFailureMessage, formatReportMessage, getProfileLevel, handleCallback, handlePrivateWhisper, isDrugSpam, isRepeatedMessage, normalizeCommandToken, normalizeMusicTracks, safeEqual, WHISPER_HELP_TEXT } from "../src/index.js";
+import worker, { buildMusicKeyboardRows, duplicateFingerprint, extractMusicQuery, finishWhisperDraft, formatModerationFailureMessage, formatReportMessage, getProfileLevel, handleCallback, handleMessage, handlePrivateWhisper, isConfiguredGroup, isDrugSpam, isRepeatedMessage, normalizeCommandToken, normalizeMusicTracks, processUpdate, safeEqual, WHISPER_HELP_TEXT } from "../src/index.js";
+test("the configured group allowlist fails closed for empty or malformed settings", () => {
+  assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: "[-100123, 42]" }, -100123), true);
+  assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: "[]" }, -100123), false);
+  assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: "not-json" }, -100123), false);
+});
+
+test("unlisted group messages and bot joins cannot activate moderation", async () => {
+  const statements = [];
+  const DB = {
+    prepare(sql) {
+      statements.push(sql);
+      return {
+        bind() { return this; },
+        async run() { return { meta: { changes: 1 } }; },
+      };
+    },
+  };
+  const env = { DB, MAIN_GROUP_IDS: "[]", TELEGRAM_BOT_TOKEN: "unused" };
+  const chat = { id: -100123, type: "supergroup", title: "Unlisted group" };
+
+  await handleMessage(env, {
+    chat,
+    from: { id: 77 },
+    new_chat_members: [{ id: 999 }],
+    text: "hello",
+  });
+  assert.equal(statements.length, 0);
+
+  await processUpdate({
+    my_chat_member: {
+      chat,
+      old_chat_member: { status: "left" },
+      new_chat_member: { status: "administrator" },
+    },
+  }, env);
+
+  assert.equal(statements.length, 1);
+  assert.match(statements[0], /UPDATE allowed_groups SET active=0/);
+  assert.doesNotMatch(statements[0], /INSERT INTO allowed_groups/);
+});
+
 test("command normalization strips Telegram bot mentions without losing command prefixes", () => {
   assert.equal(normalizeCommandToken("/help@RoninBot"), "/help");
   assert.equal(normalizeCommandToken("!mute@RoninBot"), "!mute");
