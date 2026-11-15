@@ -145,7 +145,8 @@ test("Deezer music results use normalized fields and Deezer callback identifiers
   }]]);
 });
 
-function createFakeReportDb() {
+function createFakeReportDb({ failFinalization = false } = {}) {
+  let finalizationAttempts = 0;
   const report = {
     report_chat_id: -200,
     report_message_id: 900,
@@ -186,6 +187,9 @@ function createFakeReportDb() {
                 const matches = report.status === "processing"
                   && report.report_chat_id === values[1]
                   && report.report_message_id === values[2];
+                if (matches && failFinalization && finalizationAttempts++ === 0) {
+                  throw new Error("simulated D1 report finalization failure");
+                }
                 if (matches) report.status = values[0];
                 return { meta: { changes: matches ? 1 : 0 } };
               }
@@ -261,6 +265,22 @@ test("failed report deletion leaves the report open for a safe retry", async (t)
   await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, reportCallback());
 
   assert.equal(DB.report.status, "open");
+  assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
+});
+
+test("a confirmed report deletion is not repeated when D1 finalization fails", async (t) => {
+  const calls = mockTelegramApi(t);
+  const DB = createFakeReportDb({ failFinalization: true });
+  const callback = reportCallback();
+
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, callback);
+
+  assert.equal(DB.report.status, "resolved");
+  assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"
+    && call.payload.text.includes("لن نكرر الحذف")));
+
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, callback);
   assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
 });
 
