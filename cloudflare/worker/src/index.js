@@ -1061,7 +1061,9 @@ export async function handleCallback(env, callback) {
     await telegram(env, "answerCallbackQuery", {
       callback_query_id: callback.id,
       text: banSucceeded
-        ? "تم حظر العضو، لكن تعذر حذف الرسالة. لن نكرر الحظر؛ احذف الرسالة يدوياً."
+        ? deleteSucceeded
+          ? "تم حظر العضو وحذف الرسالة، لكن تعذر حفظ حالة البلاغ. لن نكرر الإجراء."
+          : "تم حظر العضو، لكن تعذر حذف الرسالة. لن نكرر الحظر؛ احذف الرسالة يدوياً."
         : deleteSucceeded
           ? "حُذفت الرسالة، لكن تعذر حفظ حالة البلاغ. لن نكرر الحذف."
           : "تعذر تنفيذ الإجراء. تحقق من صلاحيات البوت وحاول مجدداً.",
