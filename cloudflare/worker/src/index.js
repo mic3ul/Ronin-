@@ -67,7 +67,7 @@ export function normalizeMusicCommandToken(token) {
 }
 export function extractMusicQuery(normalizedText, buttonCommand = null) {
   const commandText = buttonCommand || normalizedText || "";
-  return String(commandText).replace(/^(?:\/يوت|\/يوتيوب|\/yt|\/youtube|\/music)(?:@\w+)?\s*/iu, "").trim();
+  return String(commandText).replace(/^(?:\/يوتيوب|\/يوت|\/youtube|\/yt|\/music)(?:@\w+)?\s*/iu, "").trim();
 }
 function isMedia(message) { return ["photo", "video", "document", "audio", "voice", "video_note", "animation", "sticker"].some((key) => Boolean(message[key])); }
 function containsLink(message, text) {
