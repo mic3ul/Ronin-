@@ -60,9 +60,14 @@ function getText(message) { return message.text || message.caption || ""; }
 export function normalizeCommandToken(token) {
   return String(token ?? "").replace(/@[^@]+$/, "").toLowerCase();
 }
+export function normalizeMusicCommandToken(token) {
+  const normalized = normalizeCommandToken(token);
+  const name = normalized.replace(/^[/!]+/, "");
+  return name === "youtube" || name === "يوتيوب" ? "/yt" : normalized;
+}
 export function extractMusicQuery(normalizedText, buttonCommand = null) {
   const commandText = buttonCommand || normalizedText || "";
-  return String(commandText).replace(/^(?:\/يوت|\/yt|\/music)(?:@\w+)?\s*/i, "").trim();
+  return String(commandText).replace(/^(?:\/يوت|\/يوتيوب|\/yt|\/youtube|\/music)(?:@\w+)?\s*/iu, "").trim();
 }
 function isMedia(message) { return ["photo", "video", "document", "audio", "voice", "video_note", "animation", "sticker"].some((key) => Boolean(message[key])); }
 function containsLink(message, text) {
@@ -753,7 +758,7 @@ async function handleCommands(env, message, member) {
     "حظر":"/حظر", "ban":"/ban", "فك_الحظر":"/فك_الحظر", "unban":"/unban", "كتم":"/كتم", "mute":"/mute", "رفع":"/رفع", "unmute":"/رفع", "الغاء_كتم":"/الغاء_كتم", "تقييد":"/تقييد", "restrict":"/restrict"
   };
   const rawCommand = text.split(/\s+/)[0] || "";
-  const canonical = aliases[firstWord] || normalizeCommandToken(rawCommand);
+  const canonical = aliases[firstWord] || normalizeMusicCommandToken(rawCommand);
   const normalizedText = canonical + (rest ? " " + rest : "");
   const buttonCommands = {
     "🎮 الألعاب": "/العاب", "👤 ملفي": "/ملفي", "🏆 المتصدرون": "/المتصدرين",
