@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { buildMusicKeyboardRows, duplicateFingerprint, extractMusicQuery, finishWhisperDraft, formatModerationFailureMessage, formatReportMessage, getProfileLevel, handleCallback, handleMessage, handlePrivateWhisper, isConfiguredGroup, isDrugSpam, isRepeatedMessage, normalizeCommandToken, normalizeMusicTracks, processUpdate, safeEqual, WHISPER_HELP_TEXT } from "../src/index.js";
+import worker, { buildMusicKeyboardRows, duplicateFingerprint, extractMusicQuery, finishWhisperDraft, formatModerationFailureMessage, formatReportMessage, getProfileLevel, handleCallback, handleMessage, handlePrivateWhisper, isConfiguredGroup, isDrugSpam, isRepeatedMessage, normalizeCommandToken, normalizeMusicCommandToken, normalizeMusicTracks, processUpdate, safeEqual, WHISPER_HELP_TEXT } from "../src/index.js";
 test("the configured group allowlist fails closed for empty or malformed settings", () => {
   assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: "[-100123, 42]" }, -100123), true);
   assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: "[]" }, -100123), false);
@@ -53,8 +53,18 @@ test("music query extraction supports natural aliases, bot mentions, and keyboar
   assert.equal(extractMusicQuery("/yt Drake"), "Drake");
   assert.equal(extractMusicQuery("/music Song title"), "Song title");
   assert.equal(extractMusicQuery("/يوت أغنية عربية"), "أغنية عربية");
+  assert.equal(extractMusicQuery("/يوتيوب أغنية عربية"), "أغنية عربية");
+  assert.equal(extractMusicQuery("/youtube Drake"), "Drake");
   assert.equal(extractMusicQuery("/yt@RoninBot Radiohead"), "Radiohead");
   assert.equal(extractMusicQuery("/يوت", "/يوت"), "");
+});
+
+test("YouTube command aliases normalize Arabic and English forms with bot mentions", () => {
+  assert.equal(normalizeMusicCommandToken("/youtube@RoninBot"), "/yt");
+  assert.equal(normalizeMusicCommandToken("/يوتيوب@RoninBot"), "/yt");
+  assert.equal(normalizeMusicCommandToken("youtube"), "/yt");
+  assert.equal(normalizeMusicCommandToken("يوتيوب"), "/yt");
+  assert.equal(normalizeMusicCommandToken("/music@RoninBot"), "/music");
 });
 
 test("moderation failure messages escape HTML and use a real line break", () => {
