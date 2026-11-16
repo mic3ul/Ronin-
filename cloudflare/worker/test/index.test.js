@@ -260,6 +260,35 @@ function mockTelegramApi(t, { memberStatus = "administrator", results = {} } = {
   return calls;
 }
 
+test("configured bot membership activates only the allowlisted group", async (t) => {
+  const calls = mockTelegramApi(t);
+  const statements = [];
+  const DB = {
+    prepare(sql) {
+      statements.push(sql);
+      return {
+        bind() { return this; },
+        async run() { return { meta: { changes: 1 } }; },
+      };
+    },
+  };
+  const chat = { id: -100123, type: "supergroup", title: "Allowed group" };
+
+  await processUpdate({
+    my_chat_member: {
+      chat,
+      old_chat_member: { status: "left" },
+      new_chat_member: { status: "administrator" },
+    },
+  }, { DB, MAIN_GROUP_IDS: "[-100123]", TELEGRAM_BOT_TOKEN: "test-token" });
+
+  assert.equal(statements.length, 1);
+  assert.match(statements[0], /INSERT INTO allowed_groups/);
+  assert.ok(calls.some((call) => call.method === "sendMessage"
+    && call.payload.chat_id === -100123
+    && call.payload.text.includes("رونين وصل للمجموعة")));
+});
+
 function reportCallback(data = "report_del|-100|55|42") {
   return {
     id: "report-callback",
