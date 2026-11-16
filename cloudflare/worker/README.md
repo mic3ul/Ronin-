@@ -165,3 +165,18 @@ Workers AI is not required by this runtime and no paid AI model is invoked.
   after configuring secrets, groups, bot permissions, and D1 migration.
 - Keep the Python polling runtime unchanged until the Cloudflare version has
   been tested in a controlled group. Do not run both delivery modes at once.
+
+## Search command scope
+
+The Python/aiogram runtime implements the metadata-only YouTube search in
+`handlers/youtube.py`. It accepts `/yt`, `/youtube`, `/يوت`,
+`/يوتيوب`, and `/بحث`, and returns video title, channel, duration, and
+direct YouTube links. It does not download or re-host YouTube media.
+
+The Cloudflare Worker does **not** currently port that YouTube handler.
+In this Worker, `/يوت`, `/yt`, and `/music` route to Apple Music search
+with a Deezer fallback and may send provider preview clips. These commands
+are not equivalent to the Python YouTube metadata search, despite their
+overlapping aliases. Do not treat the Worker runtime as feature-identical
+until this command collision is intentionally resolved and the metadata-only
+YouTube behavior is ported.
