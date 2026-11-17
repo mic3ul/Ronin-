@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import worker, { buildMusicKeyboardRows, duplicateFingerprint, extractMusicQuery, finishWhisperDraft, formatModerationFailureMessage, formatReportMessage, getProfileLevel, handleCallback, handleMessage, handlePrivateWhisper, isConfiguredGroup, isDrugSpam, isRepeatedMessage, normalizeCommandToken, normalizeMusicTracks, processUpdate, safeEqual, WHISPER_HELP_TEXT } from "../src/index.js";
 test("the configured group allowlist fails closed for empty or malformed settings", () => {
   assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: "[-100123, 42]" }, -100123), true);
@@ -20,6 +21,16 @@ test("group allowlist rejects coercible non-integer IDs and invalid chat IDs", (
 
   assert.equal(isConfiguredGroup(env, 0), false);
   assert.equal(isConfiguredGroup(env, 1), false);
+});
+test("final D1 migration removes duplicate indexes recreated by game migrations", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0009_duplicate_index_cleanup_after_social_games.sql", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(sql, /DROP INDEX IF EXISTS idx_duplicate_messages_created;/);
+  assert.match(sql, /DROP INDEX IF EXISTS idx_duplicate_messages_created_at;/);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_duplicate_messages_chat_time/);
 });
 
 test("unlisted group messages and bot joins cannot activate moderation", async () => {
