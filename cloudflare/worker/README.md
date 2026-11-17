@@ -115,7 +115,9 @@ group. If Ronin was already added while the group was not allowlisted, remove
 and re-add it after configuring the ID so Telegram sends a fresh membership
 update. A previously active D1 row does not override the environment allowlist.
 
-Apply all checked-in migrations, including `0002_social_games_whispers.sql`, `0003_daily_checkins.sql`, and `0004_group_leaderboard.sql`, before deploying the updated Worker. These migrations are additive and do not delete existing data.
+Apply all checked-in migrations before deploying the updated Worker, including `0002_social_games_whispers.sql`, `0003_daily_checkins.sql`, `0004_group_leaderboard.sql`, and the final `0009_duplicate_index_cleanup_after_social_games.sql`. These migrations are additive and do not delete existing data.
+
+The games branch also adds `0003_duplicate_messages.sql` and `0007_duplicate_messages.sql`, which recreate legacy timestamp-only indexes. The base branch's `0008_duplicate_index_cleanup.sql` removes those indexes, but D1 does not rerun an already-recorded migration when later files with lower numeric prefixes are introduced. Keep migration `0009`: it repeats the cleanup after the games migrations so both fresh installs and stacked deployments end with the per-chat composite index.
 
 ### 4. Deploy the Worker
 
