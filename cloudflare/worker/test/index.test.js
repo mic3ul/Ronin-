@@ -6,6 +6,21 @@ test("the configured group allowlist fails closed for empty or malformed setting
   assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: "[]" }, -100123), false);
   assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: "not-json" }, -100123), false);
 });
+test("group allowlist rejects coercible non-integer IDs and invalid chat IDs", () => {
+  const env = {
+    MAIN_GROUP_IDS: '[null, true, false, "", " ", "-100123", "-100123.0", 1.5, 9007199254740992]',
+  };
+
+  assert.equal(isConfiguredGroup(env, -100123), true);
+  assert.equal(isConfiguredGroup(env, "-100123"), true);
+
+  for (const invalidChatId of [null, true, "", " ", "-100123.0", " -100123", 1.5, 9007199254740992]) {
+    assert.equal(isConfiguredGroup(env, invalidChatId), false);
+  }
+
+  assert.equal(isConfiguredGroup(env, 0), false);
+  assert.equal(isConfiguredGroup(env, 1), false);
+});
 
 test("unlisted group messages and bot joins cannot activate moderation", async () => {
   const statements = [];
