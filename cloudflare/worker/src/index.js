@@ -49,11 +49,32 @@ function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 }
 function parseIds(value) {
-  try { const parsed = JSON.parse(value || "[]"); return new Set(Array.isArray(parsed) ? parsed.map(Number).filter(Number.isSafeInteger) : []); }
-  catch { return new Set(); }
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) return new Set();
+
+    const ids = parsed.flatMap((entry) => {
+      if (typeof entry === "number") {
+        return Number.isSafeInteger(entry) ? [entry] : [];
+      }
+      if (typeof entry === "string" && /^-?\d+$/.test(entry)) {
+        const id = Number(entry);
+        return Number.isSafeInteger(id) ? [id] : [];
+      }
+      return [];
+    });
+    return new Set(ids);
+  } catch {
+    return new Set();
+  }
 }
 export function isConfiguredGroup(env, chatId) {
-  return parseIds(env?.MAIN_GROUP_IDS).has(Number(chatId));
+  const id = typeof chatId === "number"
+    ? chatId
+    : typeof chatId === "string" && /^-?\d+$/.test(chatId)
+      ? Number(chatId)
+      : NaN;
+  return Number.isSafeInteger(id) && parseIds(env?.MAIN_GROUP_IDS).has(id);
 }
 function isGroup(chat) { return chat && (chat.type === "group" || chat.type === "supergroup"); }
 function getText(message) { return message.text || message.caption || ""; }
