@@ -299,6 +299,9 @@ async function ensureMember(db, userId) {
 async function getMember(db, userId) {
   return db.prepare("SELECT user_id, message_count, reputation_points, profanity_violations, spam_violations FROM members WHERE user_id = ?").bind(userId).first();
 }
+async function getGroupMember(db, chatId, userId) {
+  return db.prepare("SELECT chat_id, user_id, message_count, reputation_points FROM group_members WHERE chat_id = ? AND user_id = ?").bind(chatId, userId).first();
+}
 
 export function getProfileLevel(points) {
   const xp = Math.max(0, Number(points) || 0);
@@ -1164,6 +1167,8 @@ export async function handleMessage(env, message, edited = false) {
   let member = await getMember(env.DB, userId);
   if (!member) return;
   if (!edited && await handleCommands(env, message, member)) return;
+  let groupMember = await getGroupMember(env.DB, message.chat.id, userId);
+  if (!groupMember) return;
   const text = getText(message);
   if (!edited && !/^\//.test(text.trim()) && await isRepeatedMessage(env,message).catch(error=>{console.warn("duplicate detection failed",error);return false;})) {
     if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) {
@@ -1181,9 +1186,12 @@ export async function handleMessage(env, message, edited = false) {
     return;
   }
   const reason = getSpamReason(text, env);
-  const lowMedia = isMedia(message) && member.reputation_points < Number(env.MEDIA_REP_THRESHOLD || DEFAULTS.media);
-  const lowLink = containsLink(message, text) && member.reputation_points < Number(env.LINK_REP_THRESHOLD || DEFAULTS.links);
-  const lowEmoji = isSingleEmoji(text) && member.reputation_points < Number(env.SINGLE_EMOJI_REP_THRESHOLD || DEFAULTS.emoji);
+  // Reputation thresholds are group-local: progress in one group must not
+  // silently grant link/media privileges in another group.
+  const groupReputation = Number(groupMember.reputation_points || 0);
+  const lowMedia = isMedia(message) && groupReputation < Number(env.MEDIA_REP_THRESHOLD || DEFAULTS.media);
+  const lowLink = containsLink(message, text) && groupReputation < Number(env.LINK_REP_THRESHOLD || DEFAULTS.links);
+  const lowEmoji = isSingleEmoji(text) && groupReputation < Number(env.SINGLE_EMOJI_REP_THRESHOLD || DEFAULTS.emoji);
   const moderationReason = reason || (lowMedia ? "media from low-reputation account" : null) || (lowLink ? "link from low-reputation account" : null) || (lowEmoji ? "single-emoji spam" : null);
   if (moderationReason) {
     if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) { if (!edited) await recordClean(env.DB, userId, message.chat.id); return; }
@@ -1196,13 +1204,21 @@ export async function handleMessage(env, message, edited = false) {
     }
     await recordViolation(env.DB, userId, moderationReason === "profanity" ? "profanity" : "spam", message.chat.id);
     member = await getMember(env.DB, userId);
+    groupMember = await getGroupMember(env.DB, message.chat.id, userId);
     await logModeration(env, message.chat, message.from, moderationReason, text).catch(() => null);
-    if (member) await maybeAutoBan(env, message.chat.id, userId, member).catch(() => null);
+    if (member && groupMember) {
+      // Spam violation totals remain account-wide, while the reputation gate
+      // for an automatic ban is evaluated within the affected group.
+      await maybeAutoBan(env, message.chat.id, userId, {
+        ...member,
+        reputation_points: groupMember.reputation_points,
+      }).catch(() => null);
+    }
     return;
   }
   if (!edited) await recordClean(env.DB, userId, message.chat.id);
-  member = await getMember(env.DB, userId);
-  if (!edited && member) await checkBurst(env, env.DB, message, member).catch(() => null);
+  groupMember = await getGroupMember(env.DB, message.chat.id, userId);
+  if (!edited && groupMember) await checkBurst(env, env.DB, message, groupMember).catch(() => null);
 }
 export async function processUpdate(update, env) {
   if (update.my_chat_member && isGroup(update.my_chat_member.chat)) {
