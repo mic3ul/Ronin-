@@ -345,7 +345,7 @@ test("high reputation in another group does not bypass this group's link thresho
               reputation_points: groupReputation,
             };
           }
-          if (sql.includes("FROM allowed_groups WHERE chat_id = ? AND active = 1")) {
+          if (sql.includes("FROM allowed_groups WHERE chat_id=? AND active=1")) {
             return { chat_id: -100123 };
           }
           if (sql.includes("FROM group_roles WHERE chat_id=? AND user_id=?")) return null;
