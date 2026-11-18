@@ -315,6 +315,78 @@ test("configured bot membership activates only the allowlisted group", async (t)
     && call.payload.text.includes("رونين وصل للمجموعة")));
 });
 
+test("high reputation in another group does not bypass this group's link threshold", async (t) => {
+  const calls = mockTelegramApi(t, { memberStatus: "member" });
+  const statements = [];
+  let globalReputation = 120;
+  let groupReputation = 0;
+  let spamViolations = 0;
+  const DB = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async first() {
+          statements.push({ sql, values });
+          if (sql.includes("FROM members WHERE user_id = ?")) {
+            return {
+              user_id: 77,
+              message_count: 120,
+              reputation_points: globalReputation,
+              profanity_violations: 0,
+              spam_violations: spamViolations,
+            };
+          }
+          if (sql.includes("FROM group_members WHERE chat_id = ? AND user_id = ?")) {
+            return {
+              chat_id: -100123,
+              user_id: 77,
+              message_count: 0,
+              reputation_points: groupReputation,
+            };
+          }
+          if (sql.includes("FROM allowed_groups WHERE chat_id = ? AND active = 1")) {
+            return { chat_id: -100123 };
+          }
+          if (sql.includes("FROM group_roles WHERE chat_id=? AND user_id=?")) return null;
+          throw new Error("Unexpected group reputation test query: " + sql);
+        },
+        async run() {
+          statements.push({ sql, values });
+          if (sql.startsWith("UPDATE members SET spam_violations")) {
+            spamViolations += 1;
+            globalReputation -= 10;
+          }
+          if (sql.startsWith("UPDATE group_members SET reputation_points=MAX")) {
+            groupReputation -= 10;
+          }
+          return { meta: { changes: 1 } };
+        },
+      };
+    },
+  };
+  const chat = { id: -100123, type: "supergroup", title: "Second group" };
+
+  await handleMessage({
+    DB,
+    MAIN_GROUP_IDS: "[-100123]",
+    TELEGRAM_BOT_TOKEN: "test-token",
+  }, {
+    chat,
+    from: { id: 77, first_name: "Member", is_bot: false },
+    message_id: 55,
+    text: "Please check https://example.com",
+    entities: [],
+  });
+
+  assert.ok(calls.some((call) => call.method === "deleteMessage"
+    && call.payload.chat_id === -100123
+    && call.payload.message_id === 55));
+  assert.ok(statements.some(({ sql }) => sql.includes("FROM group_members WHERE chat_id = ? AND user_id = ?")));
+  assert.equal(groupReputation, -10);
+  assert.equal(spamViolations, 1);
+});
+
 function reportCallback(data = "report_del|-100|55|42") {
   return {
     id: "report-callback",
