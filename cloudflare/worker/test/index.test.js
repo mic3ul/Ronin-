@@ -387,6 +387,67 @@ test("high reputation in another group does not bypass this group's link thresho
   assert.equal(spamViolations, 1);
 });
 
+test("newcomer burst detection uses this group's reputation, not account-wide reputation", async (t) => {
+  mockTelegramApi(t);
+  const statements = [];
+  let globalReputation = -20;
+  let groupReputation = 100;
+  const DB = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async first() {
+          statements.push({ sql, values });
+          if (sql.includes("FROM members WHERE user_id = ?")) {
+            return {
+              user_id: 88,
+              message_count: 10,
+              reputation_points: globalReputation,
+              profanity_violations: 0,
+              spam_violations: 0,
+            };
+          }
+          if (sql.includes("FROM group_members WHERE chat_id = ? AND user_id = ?")) {
+            return {
+              chat_id: -100456,
+              user_id: 88,
+              message_count: 10,
+              reputation_points: groupReputation,
+            };
+          }
+          if (sql.includes("FROM allowed_groups WHERE chat_id=? AND active=1")) return { chat_id: -100456 };
+          if (sql.includes("FROM group_roles WHERE chat_id=? AND user_id=?")) return null;
+          throw new Error("Unexpected burst reputation test query: " + sql);
+        },
+        async run() {
+          statements.push({ sql, values });
+          if (sql.startsWith("UPDATE members SET message_count")) globalReputation += 1;
+          if (sql.startsWith("UPDATE group_members SET message_count")) groupReputation += 1;
+          return { meta: { changes: 1 } };
+        },
+      };
+    },
+  };
+
+  await handleMessage({
+    DB,
+    MAIN_GROUP_IDS: "[-100456]",
+    TELEGRAM_BOT_TOKEN: "test-token",
+    BURST_ENABLED: "true",
+    BURST_REP_THRESHOLD: "10",
+  }, {
+    chat: { id: -100456, type: "supergroup", title: "First group" },
+    from: { id: 88, first_name: "Member", is_bot: false },
+    message_id: 57,
+    text: "A normal group message",
+    entities: [],
+  });
+
+  assert.equal(groupReputation, 101);
+  assert.equal(statements.some(({ sql }) => sql.includes("newcomer_events")), false);
+});
+
 function reportCallback(data = "report_del|-100|55|42") {
   return {
     id: "report-callback",
