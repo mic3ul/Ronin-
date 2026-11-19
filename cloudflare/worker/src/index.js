@@ -1234,7 +1234,7 @@ export async function processUpdate(update, env) {
       const wasActive = oldStatus === "member" || oldStatus === "administrator" ||
         (oldStatus === "restricted" && change.old_chat_member?.is_member === true);
       if (!wasActive) await sendRoninWelcome(env, change.chat.id, true);
-    } else if (status === "left" || status === "kicked" || (isActive && !configured)) {
+    } else if (!isActive || !configured) {
       await env.DB.prepare("UPDATE allowed_groups SET active=0, updated_at=CURRENT_TIMESTAMP WHERE chat_id=?").bind(change.chat.id).run();
     }
   }
