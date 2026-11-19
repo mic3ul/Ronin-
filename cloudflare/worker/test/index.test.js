@@ -94,6 +94,32 @@ test("restricted bot membership with is_member false deactivates the group", asy
   assert.doesNotMatch(statements[0], /INSERT INTO allowed_groups/);
 });
 
+test("restricted bot membership with is_member true keeps an allowlisted group active", async () => {
+  const statements = [];
+  const DB = {
+    prepare(sql) {
+      statements.push(sql);
+      return {
+        bind() { return this; },
+        async run() { return { meta: { changes: 1 } }; },
+      };
+    },
+  };
+  const chat = { id: -100123, type: "supergroup", title: "Still a member" };
+
+  await processUpdate({
+    my_chat_member: {
+      chat,
+      old_chat_member: { status: "restricted", is_member: true },
+      new_chat_member: { status: "restricted", is_member: true, can_send_messages: false },
+    },
+  }, { DB, MAIN_GROUP_IDS: "[-100123]" });
+
+  assert.equal(statements.length, 1);
+  assert.match(statements[0], /INSERT INTO allowed_groups/);
+  assert.doesNotMatch(statements[0], /UPDATE allowed_groups SET active=0/);
+});
+
 test("command normalization strips Telegram bot mentions without losing command prefixes", () => {
   assert.equal(normalizeCommandToken("/help@RoninBot"), "/help");
   assert.equal(normalizeCommandToken("!mute@RoninBot"), "!mute");
