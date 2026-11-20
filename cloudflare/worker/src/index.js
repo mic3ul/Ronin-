@@ -479,7 +479,7 @@ export async function finishWhisperDraft(env,draft,message) {
     });
   } catch(error) {
     console.error("ephemeral whisper notification failed",error);
-    await env.DB.prepare("UPDATE whispers SET status='failed' WHERE id=?").bind(id).run().catch(()=>null);
+    await env.DB.prepare("UPDATE whispers SET status='failed', body='' WHERE id=?").bind(id).run().catch(()=>null);
     await env.DB.prepare("UPDATE whisper_drafts SET status='failed' WHERE token=? AND status='sending'")
       .bind(draft.token).run().catch(()=>null);
     await sendText(env,message.chat.id,"تعذر إيصال تنبيه الهمسة. ابدأ همسة جديدة وحاول مجدداً.").catch(()=>null);
@@ -636,9 +636,10 @@ async function handleNewCallback(env, callback) {
 
     let opened;
     try {
-      opened = await env.DB.prepare("UPDATE whispers SET status='opened', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='opening'").bind(id).run();
+      opened = await env.DB.prepare("UPDATE whispers SET status='opened', body='', opened_at=CURRENT_TIMESTAMP WHERE id=? AND status='opening'").bind(id).run();
     } catch (stateError) {
       console.error("Whisper was delivered but its opened state could not be saved", stateError);
+      await env.DB.prepare("UPDATE whispers SET body='' WHERE id=? AND status='opening'").bind(id).run().catch((cleanupError) => console.warn("delivered whisper payload cleanup failed", cleanupError));
       await telegram(env, "answerCallbackQuery", {
         callback_query_id: callback.id,
         text: "وصلت الهمسة، لكن تعذر حفظ حالة الفتح. لن نعيد إرسالها تلقائياً لتجنب التكرار؛ تواصل مع مشرف المجموعة.",
@@ -648,6 +649,7 @@ async function handleNewCallback(env, callback) {
     }
     if (Number(opened.meta?.changes || 0) !== 1) {
       console.error("Whisper was delivered but its opened state update affected no row");
+      await env.DB.prepare("UPDATE whispers SET body='' WHERE id=? AND status IN ('opening','opened')").bind(id).run().catch((cleanupError) => console.warn("delivered whisper payload cleanup failed", cleanupError));
       await telegram(env, "answerCallbackQuery", {
         callback_query_id: callback.id,
         text: "وصلت الهمسة، لكن تعذر تأكيد حالتها. لن نعيد إرسالها تلقائياً؛ تواصل مع مشرف المجموعة.",
