@@ -39,7 +39,7 @@ test("whisper retention migration scrubs payloads after opening or terminal fail
     "utf8",
   );
 
-  assert.match(sql, /UPDATE whispers\\s+SET body = ''\\s+WHERE status IN \\('opened', 'failed'\\);/);
+  assert.ok(sql.includes("UPDATE whispers\nSET body = ''\nWHERE status IN ('opened', 'failed');"));
   assert.doesNotMatch(sql, /DELETE FROM whispers/i);
 });
 
