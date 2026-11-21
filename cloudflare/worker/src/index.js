@@ -610,11 +610,13 @@ async function handleNewCallback(env, callback) {
     // Keep Telegram delivery separate from the D1 state commit. Once Telegram has
     // delivered the ephemeral content, a database failure must not unlock the whisper
     // for another delivery: the outcome is indeterminate and should fail closed.
+    let partialDelivery = false;
     try {
       const messageText = "💌 <b>همستك:</b>\n" + escapeHtml(content.text);
       if (content.media) {
         if (content.text) {
           await telegram(env, "sendMessage", { ...callbackDelivery, text: messageText, parse_mode: "HTML" });
+          partialDelivery = true;
         }
         const methods = { photo: "sendPhoto", video: "sendVideo", animation: "sendAnimation", document: "sendDocument", audio: "sendAudio", voice: "sendVoice", video_note: "sendVideoNote", sticker: "sendSticker" };
         const mediaPayload = { ...laterDelivery, [content.media.type]: content.media.fileId, reply_markup: replyMarkup };
@@ -624,13 +626,27 @@ async function handleNewCallback(env, callback) {
         await telegram(env, "sendMessage", { ...callbackDelivery, text: messageText, parse_mode: "HTML", reply_markup: replyMarkup });
       }
     } catch (deliveryError) {
-      await env.DB.prepare("UPDATE whispers SET status='pending' WHERE id=? AND status='opening'").bind(id).run().catch(() => null);
       console.error("Whisper open delivery failed", deliveryError);
-      await telegram(env, "answerCallbackQuery", {
-        callback_query_id: callback.id,
-        text: "تعذر فتح الهمسة. حاول مجدداً.",
-        show_alert: true
-      }).catch(() => null);
+      if (partialDelivery) {
+        const failed = await env.DB.prepare("UPDATE whispers SET status='failed', body='' WHERE id=? AND status='opening'").bind(id).run().catch(() => null);
+        if (!failed || Number(failed.meta?.changes || 0) !== 1) {
+          await env.DB.prepare("UPDATE whispers SET body='' WHERE id=? AND status='opening'").bind(id).run().catch((cleanupError) => {
+            console.warn("partially delivered whisper payload cleanup failed", cleanupError);
+          });
+        }
+        await telegram(env, "answerCallbackQuery", {
+          callback_query_id: callback.id,
+          text: "وصل جزء من الهمسة فقط. أُغلقت لمنع تكرار المحتوى؛ اطلب من المرسل إرسال همسة جديدة.",
+          show_alert: true
+        }).catch(() => null);
+      } else {
+        await env.DB.prepare("UPDATE whispers SET status='pending' WHERE id=? AND status='opening'").bind(id).run().catch(() => null);
+        await telegram(env, "answerCallbackQuery", {
+          callback_query_id: callback.id,
+          text: "تعذر فتح الهمسة. حاول مجدداً.",
+          show_alert: true
+        }).catch(() => null);
+      }
       return true;
     }
 
