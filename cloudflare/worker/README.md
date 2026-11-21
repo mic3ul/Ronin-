@@ -105,7 +105,7 @@ Set these in the Worker settings or add them to `vars` in `wrangler.jsonc`:
 - `BURST_ENABLED`, `BURST_ACTION`: `log` is the safe default; `delete` is more aggressive.
 - `MEDIA_REP_THRESHOLD`, `LINK_REP_THRESHOLD`, `SINGLE_EMOJI_REP_THRESHOLD`.
 
-Whispers use Telegram ephemeral messages in the originating group: only the recipient sees a placeholder, and the text or media is delivered ephemerally after they press **Open whisper**. The sender receives an ephemeral opened notification. Telegram does not expose message read receipts, and ephemeral delivery is not guaranteed while a recipient is offline. Username-based recipient lookup requires the recipient to have previously opened the bot and sent `/start`; replying to a member's group message can target them directly. Ronin must be an administrator in the group to send ephemeral messages to arbitrary members after the initial action window.
+Whispers use Telegram ephemeral messages in the originating group: only the recipient sees a placeholder, and the text or media is delivered ephemerally after they press **Open whisper**. The sender receives an ephemeral opened notification. Telegram does not expose message read receipts, and ephemeral delivery is not guaranteed while a recipient is offline. Username-based recipient lookup requires the recipient to have previously opened the bot and sent `/start`; replying to a member's group message can target them directly. Ronin must be an administrator in the group to send ephemeral messages to arbitrary members after the initial action window. The private payload is cleared from D1 after a successful open or a terminal notification failure; migration `0010_whisper_payload_retention.sql` scrubs historical `opened` and `failed` rows. If Telegram delivers the content but D1 cannot commit the opened state, Ronin keeps the row locked and attempts a best-effort payload cleanup rather than risking a second delivery.
 
 The initial configuration intentionally leaves `MAIN_GROUP_IDS` empty and
 autoban disabled so a fresh deployment cannot moderate an unintended group.
@@ -115,7 +115,7 @@ group. If Ronin was already added while the group was not allowlisted, remove
 and re-add it after configuring the ID so Telegram sends a fresh membership
 update. A previously active D1 row does not override the environment allowlist.
 
-Apply all checked-in migrations before deploying the updated Worker, including `0002_social_games_whispers.sql`, `0003_daily_checkins.sql`, `0004_group_leaderboard.sql`, and the final `0009_duplicate_index_cleanup_after_social_games.sql`. These migrations are additive and do not delete existing data.
+Apply all checked-in migrations before deploying the updated Worker, including `0002_social_games_whispers.sql`, `0003_daily_checkins.sql`, `0004_group_leaderboard.sql`, `0009_duplicate_index_cleanup_after_social_games.sql`, and `0010_whisper_payload_retention.sql`. Migration 0010 intentionally blanks payloads for already opened or terminally failed whispers; back up D1 before applying it.
 
 The games branch also adds `0003_duplicate_messages.sql` and `0007_duplicate_messages.sql`, which recreate legacy timestamp-only indexes. The base branch's `0008_duplicate_index_cleanup.sql` removes those indexes, but D1 does not rerun an already-recorded migration when later files with lower numeric prefixes are introduced. Keep migration `0009`: it repeats the cleanup after the games migrations so both fresh installs and stacked deployments end with the per-chat composite index.
 

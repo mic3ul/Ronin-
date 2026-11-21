@@ -33,6 +33,16 @@ test("final D1 migration removes duplicate indexes recreated by game migrations"
   assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_duplicate_messages_chat_time/);
 });
 
+test("whisper retention migration scrubs payloads after opening or terminal failure", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0010_whisper_payload_retention.sql", import.meta.url),
+    "utf8",
+  );
+
+  assert.ok(sql.includes("UPDATE whispers\nSET body = ''\nWHERE status IN ('opened', 'failed');"));
+  assert.doesNotMatch(sql, /DELETE FROM whispers/i);
+});
+
 test("unlisted group messages and bot joins cannot activate moderation", async () => {
   const statements = [];
   const DB = {
@@ -737,7 +747,12 @@ function createFakeWhisperDb(initialWhisper = null) {
           }
           if (sql.includes("UPDATE whispers SET status='opened'")) {
             const matches = whisper && Number(whisper.id) === Number(values[0]) && whisper.status === "opening";
-            if (matches) { whisper.status = "opened"; whisper.opened_at = "2026-11-09 12:00:00"; }
+            if (matches) { whisper.status = "opened"; whisper.body = ""; whisper.opened_at = "2026-11-09 12:00:00"; }
+            return { meta: { changes: matches ? 1 : 0 } };
+          }
+          if (sql.includes("UPDATE whispers SET body=''")) {
+            const matches = whisper && Number(whisper.id) === Number(values[0]) && ["opening", "opened"].includes(whisper.status);
+            if (matches) whisper.body = "";
             return { meta: { changes: matches ? 1 : 0 } };
           }
           if (sql.includes("UPDATE whispers SET status='pending'")) {
@@ -746,7 +761,7 @@ function createFakeWhisperDb(initialWhisper = null) {
             return { meta: { changes: matches ? 1 : 0 } };
           }
           if (sql.includes("UPDATE whispers SET status='failed'")) {
-            if (whisper && Number(whisper.id) === Number(values[0])) whisper.status = "failed";
+            if (whisper && Number(whisper.id) === Number(values[0])) { whisper.status = "failed"; whisper.body = ""; }
             return { meta: { changes: 1 } };
           }
           if (sql.includes("UPDATE whisper_drafts SET status='sending'")) {
@@ -916,6 +931,7 @@ test("failed whisper notification closes the draft instead of allowing duplicate
 
   assert.equal(DB.draftStatus, "failed");
   assert.equal(DB.whisper.status, "failed");
+  assert.equal(DB.whisper.body, "");
   assert.ok(calls.some((call) => call.method === "sendMessage"
     && call.payload.text?.includes("ابدأ همسة جديدة")));
 });
@@ -979,6 +995,7 @@ test("opening a text whisper reveals it ephemerally and notifies the sender", as
   assert.ok(delivery.payload.text.includes("رسالة لا يراها إلا المستلم"));
   assert.equal(delivery.payload.reply_markup.inline_keyboard[0][0].callback_data, "whisper_reply:42");
   assert.equal(DB.whisper.status, "opened");
+  assert.equal(DB.whisper.body, "");
   assert.ok(calls.some((call) => call.method === "sendMessage"
     && call.payload.ephemeral_message_parameters?.receiver_user_id === 100
     && call.payload.text.includes("تم فتح همستك")));
@@ -1003,6 +1020,7 @@ test("opening a media whisper sends the stored Telegram file only to its recipie
   assert.equal(delivery.payload.ephemeral_message_parameters.callback_query_id, "whisper-open-callback");
   assert.equal(delivery.payload.reply_markup.inline_keyboard[0][0].callback_data, "whisper_reply:42");
   assert.equal(DB.whisper.status, "opened");
+  assert.equal(DB.whisper.body, "");
 });
 
 test("a user cannot open another member's whisper", async (t) => {
@@ -1097,6 +1115,7 @@ test("a delivered whisper stays locked when D1 cannot commit its opened state", 
     && call.payload.ephemeral_message_parameters?.callback_query_id === "whisper-open-callback");
   assert.equal(deliveries().length, 1);
   assert.equal(DB.whisper.status, "opening");
+  assert.equal(DB.whisper.body, "");
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery"
     && call.payload.text.includes("لن نعيد إرسالها تلقائياً")));
 
@@ -1104,4 +1123,45 @@ test("a delivered whisper stays locked when D1 cannot commit its opened state", 
   await handleCallback(env, whisperOpenCallback());
   assert.equal(deliveries().length, 1);
   assert.equal(DB.whisper.status, "opening");
+});
+
+
+test("a partially delivered text-and-media whisper is closed instead of being resent", async (t) => {
+  const calls = mockTelegramApi(t);
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    if (method === "sendPhoto") {
+      const payload = JSON.parse(options.body || "{}");
+      calls.push({ method, payload });
+      return new Response(JSON.stringify({ ok: false, description: "simulated media delivery failure" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return normalFetch(url, options);
+  };
+  const DB = createFakeWhisperDb({
+    id: 42,
+    sender_user_id: 100,
+    recipient_user_id: 200,
+    body: JSON.stringify({ version: 1, text: "نص الهمسة", media: { type: "photo", fileId: "photo-file-id" } }),
+    status: "pending",
+  });
+  const env = { DB, TELEGRAM_BOT_TOKEN: "test-token" };
+
+  await handleCallback(env, whisperOpenCallback());
+
+  assert.equal(DB.whisper.status, "failed");
+  assert.equal(DB.whisper.body, "");
+  assert.equal(calls.filter((call) => call.method === "sendMessage"
+    && call.payload.text?.includes("نص الهمسة")).length, 1);
+  assert.equal(calls.filter((call) => call.method === "sendPhoto").length, 1);
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"
+    && call.payload.text.includes("وصل جزء من الهمسة فقط")));
+
+  await handleCallback(env, whisperOpenCallback());
+  assert.equal(calls.filter((call) => call.method === "sendMessage"
+    && call.payload.text?.includes("نص الهمسة")).length, 1);
+  assert.equal(calls.filter((call) => call.method === "sendPhoto").length, 1);
 });
