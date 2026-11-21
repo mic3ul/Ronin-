@@ -1124,3 +1124,44 @@ test("a delivered whisper stays locked when D1 cannot commit its opened state", 
   assert.equal(deliveries().length, 1);
   assert.equal(DB.whisper.status, "opening");
 });
+
+
+test("a partially delivered text-and-media whisper is closed instead of being resent", async (t) => {
+  const calls = mockTelegramApi(t);
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    if (method === "sendPhoto") {
+      const payload = JSON.parse(options.body || "{}");
+      calls.push({ method, payload });
+      return new Response(JSON.stringify({ ok: false, description: "simulated media delivery failure" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return normalFetch(url, options);
+  };
+  const DB = createFakeWhisperDb({
+    id: 42,
+    sender_user_id: 100,
+    recipient_user_id: 200,
+    body: JSON.stringify({ version: 1, text: "نص الهمسة", media: { type: "photo", fileId: "photo-file-id" } }),
+    status: "pending",
+  });
+  const env = { DB, TELEGRAM_BOT_TOKEN: "test-token" };
+
+  await handleCallback(env, whisperOpenCallback());
+
+  assert.equal(DB.whisper.status, "failed");
+  assert.equal(DB.whisper.body, "");
+  assert.equal(calls.filter((call) => call.method === "sendMessage"
+    && call.payload.text?.includes("نص الهمسة")).length, 1);
+  assert.equal(calls.filter((call) => call.method === "sendPhoto").length, 1);
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"
+    && call.payload.text.includes("وصل جزء من الهمسة فقط")));
+
+  await handleCallback(env, whisperOpenCallback());
+  assert.equal(calls.filter((call) => call.method === "sendMessage"
+    && call.payload.text?.includes("نص الهمسة")).length, 1);
+  assert.equal(calls.filter((call) => call.method === "sendPhoto").length, 1);
+});
