@@ -42,8 +42,31 @@ function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 }
 function parseIds(value) {
-  try { const parsed = JSON.parse(value || "[]"); return new Set(Array.isArray(parsed) ? parsed.map(Number).filter(Number.isSafeInteger) : []); }
-  catch { return new Set(); }
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) return new Set();
+    const ids = [];
+    for (const raw of parsed) {
+      if (typeof raw === "number") {
+        if (Number.isSafeInteger(raw) && raw < 0) ids.push(raw);
+        continue;
+      }
+      if (typeof raw !== "string" || !/^-?\\d+$/.test(raw)) continue;
+      const id = Number(raw);
+      if (Number.isSafeInteger(id) && id < 0) ids.push(id);
+    }
+    return new Set(ids);
+  } catch {
+    return new Set();
+  }
+}
+export function isConfiguredGroup(env, chatId) {
+  const id = typeof chatId === "number"
+    ? chatId
+    : typeof chatId === "string" && /^-?\\d+$/.test(chatId)
+      ? Number(chatId)
+      : NaN;
+  return Number.isSafeInteger(id) && id < 0 && parseIds(env?.MAIN_GROUP_IDS).has(id);
 }
 function isGroup(chat) { return chat && (chat.type === "group" || chat.type === "supergroup"); }
 function getText(message) { return message.text || message.caption || ""; }
@@ -332,7 +355,7 @@ export async function handleCallback(env, callback) {
 }
 export async function handleMessage(env, message, edited = false) {
   if (!message || !message.from || message.from.is_bot || !isGroup(message.chat)) return;
-  if (!parseIds(env.MAIN_GROUP_IDS).has(Number(message.chat.id))) return;
+  if (!isConfiguredGroup(env, message.chat.id)) return;
   const userId = message.from.id;
   await ensureMember(env.DB, userId);
   let member = await getMember(env.DB, userId);
