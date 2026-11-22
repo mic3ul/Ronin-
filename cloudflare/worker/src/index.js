@@ -51,7 +51,7 @@ function parseIds(value) {
         if (Number.isSafeInteger(raw) && raw < 0) ids.push(raw);
         continue;
       }
-      if (typeof raw !== "string" || !/^-?\\d+$/.test(raw)) continue;
+      if (typeof raw !== "string" || !/^-?\d+$/.test(raw)) continue;
       const id = Number(raw);
       if (Number.isSafeInteger(id) && id < 0) ids.push(id);
     }
@@ -63,7 +63,7 @@ function parseIds(value) {
 export function isConfiguredGroup(env, chatId) {
   const id = typeof chatId === "number"
     ? chatId
-    : typeof chatId === "string" && /^-?\\d+$/.test(chatId)
+    : typeof chatId === "string" && /^-?\d+$/.test(chatId)
       ? Number(chatId)
       : NaN;
   return Number.isSafeInteger(id) && id < 0 && parseIds(env?.MAIN_GROUP_IDS).has(id);
