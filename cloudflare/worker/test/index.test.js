@@ -73,7 +73,12 @@ test("readiness endpoint reports configuration presence without exposing secrets
   const response = await worker.fetch(
     new Request("https://ronin.test/ready"),
     {
-      DB: {},
+      DB: {
+        prepare(sql) {
+          assert.equal(sql, "SELECT 1 AS ready");
+          return { async first() { return { ready: 1 }; } };
+        },
+      },
       TELEGRAM_BOT_TOKEN: token,
       TELEGRAM_WEBHOOK_SECRET: webhookSecret,
       MAIN_GROUP_IDS: '[-100123, "-100456"]',
@@ -94,6 +99,27 @@ test("readiness endpoint reports configuration presence without exposing secrets
   assert.equal(serialized.includes(webhookSecret), false);
   assert.equal(serialized.includes("-100123"), false);
   assert.equal(serialized.includes("-100456"), false);
+});
+
+test("readiness endpoint reports D1 unavailable when the health query fails", async () => {
+  const response = await worker.fetch(
+    new Request("https://ronin.test/ready"),
+    {
+      DB: {
+        prepare() {
+          return { async first() { throw new Error("D1 unavailable"); } };
+        },
+      },
+      TELEGRAM_BOT_TOKEN: "test-token",
+      TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
+      MAIN_GROUP_IDS: "[-100123]",
+    },
+  );
+
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.status, "not_ready");
+  assert.equal(body.missing.includes("DB"), true);
 });
 
 test("webhook rejects missing or invalid secret before touching D1", async () => {
