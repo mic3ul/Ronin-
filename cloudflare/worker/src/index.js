@@ -68,9 +68,18 @@ export function isConfiguredGroup(env, chatId) {
       : NaN;
   return Number.isSafeInteger(id) && id < 0 && parseIds(env?.MAIN_GROUP_IDS).has(id);
 }
-function getReadiness(env) {
+async function getReadiness(env) {
   const missing = [];
-  if (!env?.DB) missing.push("DB");
+  if (!env?.DB) {
+    missing.push("DB");
+  } else {
+    try {
+      const probe = await env.DB.prepare("SELECT 1 AS ready").first();
+      if (Number(probe?.ready) !== 1) missing.push("DB");
+    } catch {
+      missing.push("DB");
+    }
+  }
   if (typeof env?.TELEGRAM_BOT_TOKEN !== "string" || !env.TELEGRAM_BOT_TOKEN.trim()) {
     missing.push("TELEGRAM_BOT_TOKEN");
   }
@@ -417,7 +426,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return json({ service: "ronin-cloudflare-bot", status: "ok", runtime: "workers+d1" });
     if (request.method === "GET" && url.pathname === "/ready") {
-      const readiness = getReadiness(env);
+      const readiness = await getReadiness(env);
       return json({
         service: "ronin-cloudflare-bot",
         status: readiness.ready ? "ready" : "not_ready",
