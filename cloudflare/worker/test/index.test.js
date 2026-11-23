@@ -1,12 +1,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import worker, { deleteRepeatedMessage, duplicateFingerprint, escapeHtml, handleCallback, handleMessage, isDrugSpam, isRepeatedMessage, normalizeCommand, safeEqual } from "../src/index.js";
+import worker, { deleteRepeatedMessage, duplicateFingerprint, escapeHtml, handleCallback, handleMessage, isConfiguredGroup, isDrugSpam, isRepeatedMessage, normalizeCommand, safeEqual } from "../src/index.js";
 
 test("webhook secret comparison rejects wrong values", () => {
   assert.equal(safeEqual("secret_123", "secret_123"), true);
   assert.equal(safeEqual("secret_123", "secret_124"), false);
   assert.equal(safeEqual("short", "longer"), false);
+});
+
+test("group allowlist accepts only explicit negative safe-integer IDs", () => {
+  const env = { MAIN_GROUP_IDS: '[-100123, "-100456"]' };
+  assert.equal(isConfiguredGroup(env, -100123), true);
+  assert.equal(isConfiguredGroup(env, "-100456"), true);
+
+  for (const invalidChatId of [
+    null, true, false, "", " ", " -100123", "-100123.0",
+    0, 123, 1.5, 9007199254740992,
+  ]) {
+    assert.equal(isConfiguredGroup(env, invalidChatId), false);
+  }
+});
+
+test("malformed allowlist entries fail closed instead of being coerced", () => {
+  const env = {
+    MAIN_GROUP_IDS: '[null, true, false, "", " ", "-100123.0", 1.5, 9007199254740992, -100456]',
+  };
+  assert.equal(isConfiguredGroup(env, -100456), true);
+  assert.equal(isConfiguredGroup(env, -100123), false);
+  assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: "not-json" }, -100456), false);
+  assert.equal(isConfiguredGroup({ MAIN_GROUP_IDS: '{"id":-100456}' }, -100456), false);
 });
 
 test("short drug-shop bait is recognized without flagging normal prose", () => {
