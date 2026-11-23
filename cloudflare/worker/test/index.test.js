@@ -22,6 +22,19 @@ test("group allowlist rejects coercible non-integer IDs and invalid chat IDs", (
   assert.equal(isConfiguredGroup(env, 0), false);
   assert.equal(isConfiguredGroup(env, 1), false);
 });
+test("group allowlist accepts only negative safe-integer Telegram group IDs", () => {
+  const env = {
+    MAIN_GROUP_IDS: '[-100123, "-100456", 42, "43", 0, "0", 1.5, null, true, ""]',
+  };
+
+  assert.equal(isConfiguredGroup(env, -100123), true);
+  assert.equal(isConfiguredGroup(env, "-100456"), true);
+
+  for (const invalidChatId of [42, "42", 43, "43", 0, "0", 1.5, null, true]) {
+    assert.equal(isConfiguredGroup(env, invalidChatId), false);
+  }
+});
+
 test("final D1 migration removes duplicate indexes recreated by game migrations", async () => {
   const sql = await readFile(
     new URL("../migrations/0009_duplicate_index_cleanup_after_social_games.sql", import.meta.url),

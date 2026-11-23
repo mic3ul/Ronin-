@@ -53,16 +53,16 @@ function parseIds(value) {
     const parsed = JSON.parse(value || "[]");
     if (!Array.isArray(parsed)) return new Set();
 
-    const ids = parsed.flatMap((entry) => {
-      if (typeof entry === "number") {
-        return Number.isSafeInteger(entry) ? [entry] : [];
+    const ids = [];
+    for (const raw of parsed) {
+      if (typeof raw === "number") {
+        if (Number.isSafeInteger(raw) && raw < 0) ids.push(raw);
+        continue;
       }
-      if (typeof entry === "string" && /^-?\d+$/.test(entry)) {
-        const id = Number(entry);
-        return Number.isSafeInteger(id) ? [id] : [];
-      }
-      return [];
-    });
+      if (typeof raw !== "string" || !/^-?\d+$/.test(raw)) continue;
+      const id = Number(raw);
+      if (Number.isSafeInteger(id) && id < 0) ids.push(id);
+    }
     return new Set(ids);
   } catch {
     return new Set();
@@ -74,7 +74,7 @@ export function isConfiguredGroup(env, chatId) {
     : typeof chatId === "string" && /^-?\d+$/.test(chatId)
       ? Number(chatId)
       : NaN;
-  return Number.isSafeInteger(id) && parseIds(env?.MAIN_GROUP_IDS).has(id);
+  return Number.isSafeInteger(id) && id < 0 && parseIds(env?.MAIN_GROUP_IDS).has(id);
 }
 function isGroup(chat) { return chat && (chat.type === "group" || chat.type === "supergroup"); }
 function getText(message) { return message.text || message.caption || ""; }
