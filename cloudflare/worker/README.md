@@ -96,6 +96,7 @@ secret in `wrangler.jsonc`, GitHub, or chat messages.
 Set these in the Worker settings or add them to `vars` in `wrangler.jsonc`:
 
 - `MAIN_GROUP_IDS`: JSON array of group IDs, for example `[-1001234567890]`.
+  Only negative safe-integer Telegram group IDs are accepted; malformed entries are ignored and an empty list disables group processing.
 - `REPORTS_CHAT_ID`: private reports channel/group ID.
 - `LOGS_CHAT_ID`: moderation log channel/group ID.
 - `OWNER_ID`: reserved for future owner-only controls.
