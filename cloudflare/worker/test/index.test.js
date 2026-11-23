@@ -51,6 +51,77 @@ test("health endpoint is public and reports native runtime", async () => {
   });
 });
 
+test("readiness endpoint fails closed when required bindings are missing", async () => {
+  const response = await worker.fetch(
+    new Request("https://ronin.test/ready"),
+    { MAIN_GROUP_IDS: "[]" },
+  );
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    service: "ronin-cloudflare-bot",
+    status: "not_ready",
+    runtime: "workers+d1",
+    configured_groups: 0,
+    missing: ["DB", "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "MAIN_GROUP_IDS"],
+  });
+});
+
+test("readiness endpoint reports configuration presence without exposing secrets or group IDs", async () => {
+  const token = "test-token-must-not-leak";
+  const webhookSecret = "test-webhook-secret-must-not-leak";
+  const response = await worker.fetch(
+    new Request("https://ronin.test/ready"),
+    {
+      DB: {
+        prepare(sql) {
+          assert.equal(sql, "SELECT 1 AS ready");
+          return { async first() { return { ready: 1 }; } };
+        },
+      },
+      TELEGRAM_BOT_TOKEN: token,
+      TELEGRAM_WEBHOOK_SECRET: webhookSecret,
+      MAIN_GROUP_IDS: '[-100123, "-100456"]',
+    },
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body, {
+    service: "ronin-cloudflare-bot",
+    status: "ready",
+    runtime: "workers+d1",
+    configured_groups: 2,
+    missing: [],
+  });
+  const serialized = JSON.stringify(body);
+  assert.equal(serialized.includes(token), false);
+  assert.equal(serialized.includes(webhookSecret), false);
+  assert.equal(serialized.includes("-100123"), false);
+  assert.equal(serialized.includes("-100456"), false);
+});
+
+test("readiness endpoint reports D1 unavailable when the health query fails", async () => {
+  const response = await worker.fetch(
+    new Request("https://ronin.test/ready"),
+    {
+      DB: {
+        prepare() {
+          return { async first() { throw new Error("D1 unavailable"); } };
+        },
+      },
+      TELEGRAM_BOT_TOKEN: "test-token",
+      TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
+      MAIN_GROUP_IDS: "[-100123]",
+    },
+  );
+
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.status, "not_ready");
+  assert.equal(body.missing.includes("DB"), true);
+});
+
 test("webhook rejects missing or invalid secret before touching D1", async () => {
   const request = new Request("https://ronin.test/telegram/webhook", {
     method: "POST",

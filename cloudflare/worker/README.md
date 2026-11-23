@@ -107,6 +107,16 @@ npx wrangler deploy
 Check `https://<worker-subdomain>.workers.dev/health`. It should return
 `{"service":"ronin-cloudflare-bot","status":"ok","runtime":"workers+d1"}`.
 
+Use `GET /ready` as a separate readiness check before registering the Telegram
+webhook. It returns HTTP 200 only when the D1 binding, both Telegram secrets,
+and at least one valid negative group ID in `MAIN_GROUP_IDS` are present.
+It also runs a lightweight `SELECT 1` against D1; a missing or unreachable
+database returns HTTP 503.
+Otherwise it returns HTTP 503 and lists only the missing binding names. It
+never returns secret values or configured group IDs. An empty allowlist is
+intentionally **not ready**; the liveness endpoint `/health` remains available
+even while configuration is incomplete.
+
 ### 5. Register Telegram webhook
 
 Stop the old polling process first. Telegram cannot deliver updates through

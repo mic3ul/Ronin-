@@ -68,6 +68,28 @@ export function isConfiguredGroup(env, chatId) {
       : NaN;
   return Number.isSafeInteger(id) && id < 0 && parseIds(env?.MAIN_GROUP_IDS).has(id);
 }
+async function getReadiness(env) {
+  const missing = [];
+  if (!env?.DB) {
+    missing.push("DB");
+  } else {
+    try {
+      const probe = await env.DB.prepare("SELECT 1 AS ready").first();
+      if (Number(probe?.ready) !== 1) missing.push("DB");
+    } catch {
+      missing.push("DB");
+    }
+  }
+  if (typeof env?.TELEGRAM_BOT_TOKEN !== "string" || !env.TELEGRAM_BOT_TOKEN.trim()) {
+    missing.push("TELEGRAM_BOT_TOKEN");
+  }
+  if (typeof env?.TELEGRAM_WEBHOOK_SECRET !== "string" || !env.TELEGRAM_WEBHOOK_SECRET.trim()) {
+    missing.push("TELEGRAM_WEBHOOK_SECRET");
+  }
+  const configuredGroups = parseIds(env?.MAIN_GROUP_IDS).size;
+  if (configuredGroups === 0) missing.push("MAIN_GROUP_IDS");
+  return { ready: missing.length === 0, missing, configuredGroups };
+}
 function isGroup(chat) { return chat && (chat.type === "group" || chat.type === "supergroup"); }
 function getText(message) { return message.text || message.caption || ""; }
 function isMedia(message) { return ["photo", "video", "document", "audio", "voice", "video_note", "animation", "sticker"].some((key) => Boolean(message[key])); }
@@ -403,6 +425,16 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return json({ service: "ronin-cloudflare-bot", status: "ok", runtime: "workers+d1" });
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const readiness = await getReadiness(env);
+      return json({
+        service: "ronin-cloudflare-bot",
+        status: readiness.ready ? "ready" : "not_ready",
+        runtime: "workers+d1",
+        configured_groups: readiness.configuredGroups,
+        missing: readiness.missing,
+      }, readiness.ready ? 200 : 503);
+    }
     if (url.pathname !== WEBHOOK_PATH) return json({ error: "not_found" }, 404);
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
     if (!env.TELEGRAM_WEBHOOK_SECRET || !safeEqual(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "", env.TELEGRAM_WEBHOOK_SECRET)) return json({ error: "unauthorized" }, 401);
