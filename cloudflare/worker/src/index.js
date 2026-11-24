@@ -264,7 +264,11 @@ async function sendRoninWelcome(env, chatId, group = false) {
 }
 async function isChatAdmin(env, chatId, userId) {
   const member = await telegram(env, "getChatMember", { chat_id: chatId, user_id: userId });
-  return member.status === "creator" || member.status === "administrator";
+  const status = member?.status;
+  if (!["creator", "administrator", "member", "restricted", "left", "kicked"].includes(status)) {
+    throw new Error("Telegram member status could not be verified");
+  }
+  return status === "creator" || status === "administrator";
 }
 const RANKS = {
   member: { level: 0, label: "عضو" },
@@ -905,7 +909,13 @@ async function handleCommands(env, message, member) {
       await sendText(env, chatId, "ردّ على رسالة العضو المراد الإبلاغ عنه. استقبال البلاغات غير مفعّل حتى تُضبط قناة البلاغات.");
       return true;
     }
-    if (await isChatAdmin(env, chatId, target.from.id).catch(() => false)) { await sendText(env, chatId, "لا يمكن الإبلاغ عن مشرفي المجموعة."); return true; }
+    const targetIsAdmin = await isChatAdmin(env, chatId, target.from.id).catch(() => null);
+    if (targetIsAdmin !== false) {
+      await sendText(env, chatId, targetIsAdmin
+        ? "لا يمكن الإبلاغ عن مشرفي المجموعة."
+        : "تعذر التحقق من حالة العضو؛ لم يُرسل البلاغ. حاول لاحقاً.");
+      return true;
+    }
     const note = await sendText(env, env.REPORTS_CHAT_ID,
       formatReportMessage(message.chat, target.from, message.from, getText(target)),
       { reply_markup: { inline_keyboard: [[
@@ -998,10 +1008,16 @@ async function handleCommands(env, message, member) {
   if (["/ban", "!ban", "/unban", "!unban"].includes(command)) {
     if (!message.reply_to_message || !message.reply_to_message.from || !await isChatAdmin(env, chatId, message.from.id).catch(() => false)) return true;
     const targetId = message.reply_to_message.from.id;
-    if (await isChatAdmin(env, chatId, targetId).catch(() => false)) { await sendText(env, chatId, "I cannot ban or unban a group administrator."); return true; }
+    const targetIsAdmin = await isChatAdmin(env, chatId, targetId).catch(() => null);
+    if (targetIsAdmin !== false) {
+      await sendText(env, chatId, targetIsAdmin
+        ? "لا يمكن حظر مشرف في المجموعة أو فك حظره."
+        : "تعذر التحقق من صلاحيات العضو؛ لم يتم تنفيذ الإجراء.");
+      return true;
+    }
     const method = command.endsWith("unban") ? "unbanChatMember" : "banChatMember";
     await telegram(env, method, { chat_id: chatId, user_id: targetId });
-    await sendText(env, chatId, method === "banChatMember" ? "User banned." : "User unbanned.");
+    await sendText(env, chatId, method === "banChatMember" ? "تم حظر العضو." : "تم فك حظر العضو.");
     return true;
   }
   return false;
@@ -1060,6 +1076,23 @@ export async function handleCallback(env, callback) {
       show_alert: true,
     });
     return;
+  }
+
+  if (action === "report_ban") {
+    const targetIsAdmin = await isChatAdmin(env, chatId, userId).catch(() => null);
+    if (targetIsAdmin !== false) {
+      await env.DB.prepare(
+        "UPDATE reports SET status = 'open' WHERE report_chat_id = ? AND report_message_id = ? AND status = 'processing'"
+      ).bind(reportChatId, reportMessageId).run().catch(() => null);
+      await telegram(env, "answerCallbackQuery", {
+        callback_query_id: callback.id,
+        text: targetIsAdmin
+          ? "لا يمكن حظر مشرف في المجموعة. لم يُنفذ أي إجراء."
+          : "تعذر التحقق من صلاحيات العضو؛ لم يتم الحظر. حاول مجدداً.",
+        show_alert: true,
+      }).catch(() => null);
+      return;
+    }
   }
 
   let banSucceeded = false;
@@ -1171,8 +1204,9 @@ export async function handleMessage(env, message, edited = false) {
   if (!groupMember) return;
   const text = getText(message);
   if (!edited && !/^\//.test(text.trim()) && await isRepeatedMessage(env,message).catch(error=>{console.warn("duplicate detection failed",error);return false;})) {
-    if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) {
-      await recordClean(env.DB, userId, message.chat.id);
+    const senderIsAdmin = await isChatAdmin(env, message.chat.id, userId).catch(() => null);
+    if (senderIsAdmin !== false) {
+      if (senderIsAdmin === true) await recordClean(env.DB, userId, message.chat.id);
       return;
     }
     try {
@@ -1194,7 +1228,11 @@ export async function handleMessage(env, message, edited = false) {
   const lowEmoji = isSingleEmoji(text) && groupReputation < Number(env.SINGLE_EMOJI_REP_THRESHOLD || DEFAULTS.emoji);
   const moderationReason = reason || (lowMedia ? "media from low-reputation account" : null) || (lowLink ? "link from low-reputation account" : null) || (lowEmoji ? "single-emoji spam" : null);
   if (moderationReason) {
-    if (await isChatAdmin(env, message.chat.id, userId).catch(() => false)) { if (!edited) await recordClean(env.DB, userId, message.chat.id); return; }
+    const senderIsAdmin = await isChatAdmin(env, message.chat.id, userId).catch(() => null);
+    if (senderIsAdmin !== false) {
+      if (senderIsAdmin === true && !edited) await recordClean(env.DB, userId, message.chat.id);
+      return;
+    }
     try {
       await telegramConfirmed(env, "deleteMessage", { chat_id: message.chat.id, message_id: message.message_id });
     } catch (error) {

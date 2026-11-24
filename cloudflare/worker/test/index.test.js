@@ -289,7 +289,8 @@ function mockTelegramApi(t, { memberStatus = "administrator", results = {} } = {
     const method = String(url).split("/").pop();
     const payload = JSON.parse(options.body || "{}");
     calls.push({ method, payload });
-    const result = method === "getChatMember" ? { status: memberStatus } : (results[method] ?? true);
+    const status = typeof memberStatus === "function" ? memberStatus(payload) : memberStatus;
+    const result = method === "getChatMember" ? { status } : (results[method] ?? true);
     return new Response(JSON.stringify({ ok: true, result }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -527,7 +528,10 @@ test("a confirmed report deletion is not repeated when D1 finalization fails", a
 });
 
 test("a confirmed report ban is not repeated when message deletion fails", async (t) => {
-  const calls = mockTelegramApi(t, { results: { deleteMessage: false } });
+  const calls = mockTelegramApi(t, {
+    memberStatus: (payload) => payload.chat_id === -200 ? "administrator" : "member",
+    results: { deleteMessage: false },
+  });
   const DB = createFakeReportDb();
   const callback = reportCallback("report_ban|-100|55|42");
 
@@ -545,7 +549,9 @@ test("a confirmed report ban is not repeated when message deletion fails", async
 });
 
 test("a confirmed report ban and deletion are not repeated when D1 finalization fails", async (t) => {
-  const calls = mockTelegramApi(t);
+  const calls = mockTelegramApi(t, {
+    memberStatus: (payload) => payload.chat_id === -200 ? "administrator" : "member",
+  });
   const DB = createFakeReportDb({ failFinalization: true });
   const callback = reportCallback("report_ban|-100|55|42");
 
@@ -1065,4 +1071,187 @@ test("a delivered whisper stays locked when D1 cannot commit its opened state", 
   await handleCallback(env, whisperOpenCallback());
   assert.equal(deliveries().length, 1);
   assert.equal(DB.whisper.status, "opening");
+});
+
+
+function createBanCommandDb() {
+  const member = {
+    user_id: 456,
+    message_count: 0,
+    reputation_points: 0,
+    profanity_violations: 0,
+    spam_violations: 0,
+  };
+  return {
+    prepare(sql) {
+      return {
+        bind() {
+          return {
+            async run() { return { meta: { changes: 1 } }; },
+            async first() {
+              if (sql.includes("FROM allowed_groups")) return { chat_id: -100123 };
+              if (sql.includes("FROM members WHERE user_id = ?")) return { ...member };
+              return null;
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+test("report ban is blocked when the target becomes a group administrator", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    const status = payload.chat_id === -200 ? "administrator" : "creator";
+    const result = method === "getChatMember" ? { status } : true;
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const DB = createFakeReportDb();
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, reportCallback("report_ban|-100|55|42"));
+
+  assert.equal(DB.report.status, "open");
+  assert.equal(calls.some((call) => call.method === "banChatMember"), false);
+  assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
+  assert.match(calls.at(-1).payload.text, /لا يمكن حظر مشرف/);
+});
+
+test("report ban fails closed when the target membership lookup fails", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    if (method === "getChatMember" && payload.chat_id === -200) {
+      return new Response(JSON.stringify({ ok: true, result: { status: "administrator" } }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    if (method === "getChatMember") {
+      return new Response(JSON.stringify({ ok: false, description: "temporary lookup failure" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const DB = createFakeReportDb();
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, reportCallback("report_ban|-100|55|42"));
+
+  assert.equal(DB.report.status, "open");
+  assert.equal(calls.some((call) => call.method === "banChatMember"), false);
+  assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
+  assert.match(calls.at(-1).payload.text, /تعذر التحقق/);
+});
+
+test("ban command is not executed when the target membership lookup fails", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    if (method === "getChatMember" && payload.user_id === 456) {
+      return new Response(JSON.stringify({ ok: true, result: { status: "administrator" } }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    if (method === "getChatMember") {
+      return new Response(JSON.stringify({ ok: false, description: "temporary lookup failure" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const DB = createBanCommandDb();
+  await handleMessage({
+    DB,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Moderator", is_bot: false },
+    message_id: 801,
+    text: "/ban",
+    reply_to_message: { from: { id: 789, first_name: "Target" } },
+  });
+
+  assert.equal(calls.some((call) => call.method === "banChatMember"), false);
+  assert.deepEqual(calls.map((call) => call.method), [
+    "getChatMember", "getChatMember", "sendMessage",
+  ]);
+  assert.match(calls.at(-1).payload.text, /تعذر التحقق/);
+});
+
+test("spam moderation skips deletion when the sender's administrator status is unknown", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const DB = {
+    prepare(sql) {
+      return {
+        bind() {
+          return {
+            async run() {
+              if (sql.startsWith("INSERT INTO duplicate_messages")) return { meta: { changes: 1 } };
+              return { meta: { changes: 1 } };
+            },
+            async first() {
+              if (sql.includes("FROM allowed_groups")) return { chat_id: -100123 };
+              if (sql.includes("FROM members WHERE user_id = ?")) return {
+                user_id: 456, message_count: 0, reputation_points: 0,
+                profanity_violations: 0, spam_violations: 0,
+              };
+              if (sql.includes("FROM group_members WHERE chat_id = ? AND user_id = ?")) return {
+                chat_id: -100123, user_id: 456, message_count: 0, reputation_points: 0,
+              };
+              return null;
+            },
+          };
+        },
+      };
+    },
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    calls.push(method);
+    if (method === "getChatMember") {
+      return new Response(JSON.stringify({ ok: false, description: "temporary lookup failure" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await handleMessage({
+    DB,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+    SPAM_TOKENS: "scam-token",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Member", is_bot: false },
+    message_id: 802,
+    text: "scam-token",
+  });
+
+  assert.deepEqual(calls, ["getChatMember"]);
 });
