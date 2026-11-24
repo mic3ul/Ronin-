@@ -323,7 +323,8 @@ test("report ban preserves the completed ban when message deletion is not confir
     const method = String(url).split("/").pop();
     const payload = JSON.parse(options.body || "{}");
     calls.push({ method, payload });
-    const result = method === "getChatMember" ? { status: "administrator" }
+    const result = method === "getChatMember"
+      ? { status: payload.chat_id === -200 ? "administrator" : "member" }
       : method === "deleteMessage" ? false : true;
     return new Response(JSON.stringify({ ok: true, result }), {
       status: 200,
@@ -342,7 +343,7 @@ test("report ban preserves the completed ban when message deletion is not confir
 
   assert.equal(DB.report.status, "banned");
   assert.deepEqual(calls.map((call) => call.method), [
-    "getChatMember", "banChatMember", "deleteMessage", "answerCallbackQuery",
+    "getChatMember", "getChatMember", "banChatMember", "deleteMessage", "answerCallbackQuery",
   ]);
   assert.match(calls.at(-1).payload.text, /تم حظر العضو، لكن تعذر حذف الرسالة/);
 });
