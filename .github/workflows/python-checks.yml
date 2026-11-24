@@ -2,9 +2,9 @@ name: Python checks
 
 on:
   pull_request:
-    branches: [main, "feature/youtube-search"]
+    branches: [main, "feature/**", "fix/**"]
   push:
-    branches: [main, "feature/**"]
+    branches: [main, "feature/**", "fix/**"]
 
 jobs:
   tests:
