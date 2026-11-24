@@ -289,7 +289,8 @@ function mockTelegramApi(t, { memberStatus = "administrator", results = {} } = {
     const method = String(url).split("/").pop();
     const payload = JSON.parse(options.body || "{}");
     calls.push({ method, payload });
-    const result = method === "getChatMember" ? { status: memberStatus } : (results[method] ?? true);
+    const status = typeof memberStatus === "function" ? memberStatus(payload) : memberStatus;
+    const result = method === "getChatMember" ? { status } : (results[method] ?? true);
     return new Response(JSON.stringify({ ok: true, result }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -527,7 +528,10 @@ test("a confirmed report deletion is not repeated when D1 finalization fails", a
 });
 
 test("a confirmed report ban is not repeated when message deletion fails", async (t) => {
-  const calls = mockTelegramApi(t, { results: { deleteMessage: false } });
+  const calls = mockTelegramApi(t, {
+    memberStatus: (payload) => payload.chat_id === -200 ? "administrator" : "member",
+    results: { deleteMessage: false },
+  });
   const DB = createFakeReportDb();
   const callback = reportCallback("report_ban|-100|55|42");
 
@@ -545,7 +549,9 @@ test("a confirmed report ban is not repeated when message deletion fails", async
 });
 
 test("a confirmed report ban and deletion are not repeated when D1 finalization fails", async (t) => {
-  const calls = mockTelegramApi(t);
+  const calls = mockTelegramApi(t, {
+    memberStatus: (payload) => payload.chat_id === -200 ? "administrator" : "member",
+  });
   const DB = createFakeReportDb({ failFinalization: true });
   const callback = reportCallback("report_ban|-100|55|42");
 
