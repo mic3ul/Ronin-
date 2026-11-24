@@ -730,3 +730,152 @@ test("generic spam moderation records a violation only after Telegram confirms d
   assert.equal(DB.member.spam_violations, 1);
   assert.equal(DB.member.reputation_points, -10);
 });
+
+
+test("report ban fails closed when the target administrator lookup is unavailable", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    if (method === "getChatMember" && payload.chat_id === -200) {
+      return new Response(JSON.stringify({ ok: true, result: { status: "administrator" } }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    if (method === "getChatMember") {
+      return new Response(JSON.stringify({ ok: false, description: "temporary lookup failure" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const DB = createFakeReportDb();
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, {
+    id: "callback-target-lookup-failed",
+    data: "report_ban|-100|55|42",
+    from: { id: 77 },
+    message: { chat: { id: -200 }, message_id: 900 },
+  });
+
+  assert.equal(DB.report.status, "open");
+  assert.equal(calls.some((call) => call.method === "banChatMember"), false);
+  assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
+  assert.deepEqual(calls.map((call) => call.method), [
+    "getChatMember", "getChatMember", "answerCallbackQuery",
+  ]);
+  assert.match(calls.at(-1).payload.text, /تعذر التحقق/);
+});
+
+test("report ban refuses to target a group administrator even if the report is stale", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    const status = payload.chat_id === -200 ? "administrator" : "creator";
+    const result = method === "getChatMember" ? { status } : true;
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const DB = createFakeReportDb();
+  await handleCallback({ DB, TELEGRAM_BOT_TOKEN: "test-token" }, {
+    id: "callback-target-now-admin",
+    data: "report_ban|-100|55|42",
+    from: { id: 77 },
+    message: { chat: { id: -200 }, message_id: 900 },
+  });
+
+  assert.equal(DB.report.status, "open");
+  assert.equal(calls.some((call) => call.method === "banChatMember"), false);
+  assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
+  assert.match(calls.at(-1).payload.text, /لا يمكن حظر مشرف/);
+});
+
+test("ban command does not proceed when the target administrator lookup fails", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    if (method === "getChatMember" && payload.user_id === 456) {
+      return new Response(JSON.stringify({ ok: true, result: { status: "administrator" } }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    if (method === "getChatMember") {
+      return new Response(JSON.stringify({ ok: false, description: "temporary lookup failure" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const DB = createModerationDb();
+  await handleMessage({
+    DB,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Moderator", is_bot: false },
+    message_id: 800,
+    text: "/ban",
+    reply_to_message: { from: { id: 789, first_name: "Target" } },
+  });
+
+  assert.equal(calls.some((call) => call.method === "banChatMember"), false);
+  assert.deepEqual(calls.map((call) => call.method), [
+    "getChatMember", "getChatMember", "sendMessage",
+  ]);
+  assert.match(calls.at(-1).payload.text, /تعذر التحقق/);
+});
+
+test("spam moderation skips deletion when the sender's administrator status is unknown", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const DB = createModerationDb();
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    calls.push(method);
+    if (method === "getChatMember") {
+      return new Response(JSON.stringify({ ok: false, description: "temporary lookup failure" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await handleMessage({
+    DB,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+    SPAM_TOKENS: "scam-token",
+    AUTOBAN_ENABLED: "true",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Member", is_bot: false },
+    message_id: 794,
+    text: "scam-token",
+  });
+
+  assert.deepEqual(calls, ["getChatMember"]);
+  assert.equal(DB.member.spam_violations, 0);
+  assert.equal(DB.member.reputation_points, 0);
+});
