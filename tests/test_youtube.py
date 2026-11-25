@@ -228,3 +228,36 @@ async def test_timed_out_search_keeps_slot_until_thread_finishes(monkeypatch):
     assert await asyncio.to_thread(finished.wait, 1)
     await asyncio.sleep(0)
     assert slots.acquire(blocking=False)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_search_keeps_slot_until_thread_finishes(monkeypatch):
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(youtube_search, "_SEARCH_SLOTS", slots)
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def slow_search(query, limit):
+        started.set()
+        release.wait(timeout=1)
+        finished.set()
+        return []
+
+    monkeypatch.setattr(youtube_search, "_search_sync", slow_search)
+    first = asyncio.create_task(youtube_search.search_youtube("cancelled query"))
+
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
+        with pytest.raises(youtube_search.YouTubeSearchBusyError):
+            await youtube_search.search_youtube("replacement query")
+    finally:
+        release.set()
+
+    assert await asyncio.to_thread(finished.wait, 1)
+    await asyncio.sleep(0)
+    assert slots.acquire(blocking=False)
