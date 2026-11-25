@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import threading
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -50,6 +51,15 @@ class YouTubeSearchError(RuntimeError):
     """Raised when YouTube search cannot be completed."""
 
 
+class YouTubeSearchBusyError(YouTubeSearchError):
+    """Raised when all bounded YouTube metadata-search slots are occupied."""
+
+
+MAX_CONCURRENT_SEARCHES = 3
+_SEARCH_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_SEARCHES)
+_SEARCH_TIMEOUT_SECONDS = 25
+
+
 def _search_sync(query: str, limit: int) -> list[dict[str, Any]]:
     options = {
         "quiet": True,
@@ -84,12 +94,36 @@ def _search_sync(query: str, limit: int) -> list[dict[str, Any]]:
 
 
 async def search_youtube(query: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Search YouTube metadata without downloading media."""
+    """Search YouTube metadata without downloading media.
+
+    A process-wide semaphore bounds yt-dlp work across groups. If a search
+    times out or its caller is cancelled, its slot remains occupied until the
+    underlying thread actually finishes; cancelling to_thread alone does not
+    stop that thread.
+    """
+    safe_limit = max(1, min(limit, 5))
+    slots = _SEARCH_SLOTS
+    if not slots.acquire(blocking=False):
+        raise YouTubeSearchBusyError("YouTube search concurrency limit reached")
+
+    release_when_worker_finishes = False
     try:
-        safe_limit = max(1, min(limit, 5))
-        return await asyncio.wait_for(
-            asyncio.to_thread(_search_sync, query, safe_limit),
-            timeout=25,
-        )
-    except Exception as exc:
-        raise YouTubeSearchError("YouTube search failed") from exc
+        worker = asyncio.create_task(asyncio.to_thread(_search_sync, query, safe_limit))
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(worker),
+                timeout=_SEARCH_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            release_when_worker_finishes = True
+            worker.add_done_callback(lambda _: slots.release())
+            raise YouTubeSearchError("YouTube search timed out") from exc
+        except asyncio.CancelledError:
+            release_when_worker_finishes = True
+            worker.add_done_callback(lambda _: slots.release())
+            raise
+        except Exception as exc:
+            raise YouTubeSearchError("YouTube search failed") from exc
+    finally:
+        if not release_when_worker_finishes:
+            slots.release()
