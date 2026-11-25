@@ -60,6 +60,16 @@ _SEARCH_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_SEARCHES)
 _SEARCH_TIMEOUT_SECONDS = 25
 
 
+def _release_search_slot(worker: asyncio.Task[Any], slots: threading.BoundedSemaphore) -> None:
+    """Consume a detached worker's result and release its concurrency slot."""
+    try:
+        worker.exception()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        slots.release()
+
+
 def _search_sync(query: str, limit: int) -> list[dict[str, Any]]:
     options = {
         "quiet": True,
@@ -116,11 +126,11 @@ async def search_youtube(query: str, limit: int = 5) -> list[dict[str, Any]]:
             )
         except asyncio.TimeoutError as exc:
             release_when_worker_finishes = True
-            worker.add_done_callback(lambda _: slots.release())
+            worker.add_done_callback(lambda task: _release_search_slot(task, slots))
             raise YouTubeSearchError("YouTube search timed out") from exc
         except asyncio.CancelledError:
             release_when_worker_finishes = True
-            worker.add_done_callback(lambda _: slots.release())
+            worker.add_done_callback(lambda task: _release_search_slot(task, slots))
             raise
         except Exception as exc:
             raise YouTubeSearchError("YouTube search failed") from exc
