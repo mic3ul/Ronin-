@@ -124,7 +124,7 @@ async def search_youtube(query: str, limit: int = 5) -> list[dict[str, Any]]:
                 asyncio.shield(worker),
                 timeout=_SEARCH_TIMEOUT_SECONDS,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             release_when_worker_finishes = True
             worker.add_done_callback(lambda task: _release_search_slot(task, slots))
             raise YouTubeSearchError("YouTube search timed out") from exc
