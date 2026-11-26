@@ -261,3 +261,48 @@ async def test_cancelled_search_keeps_slot_until_thread_finishes(monkeypatch):
     assert await asyncio.to_thread(finished.wait, 1)
     await asyncio.sleep(0)
     assert slots.acquire(blocking=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "limit"),
+    [
+        (None, 5),
+        (123, 5),
+        ("", 5),
+        (" \\t\\n", 5),
+        ("x" * 161, 5),
+        ("test", True),
+        ("test", 1.5),
+        ("test", "2"),
+        ("test", None),
+    ],
+)
+async def test_search_youtube_rejects_invalid_inputs_without_acquiring_slot(
+    monkeypatch, query, limit
+):
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(youtube_search, "_SEARCH_SLOTS", slots)
+
+    def unexpected_search(*args):
+        raise AssertionError("invalid input must not start a yt-dlp worker")
+
+    monkeypatch.setattr(youtube_search, "_search_sync", unexpected_search)
+    with pytest.raises(youtube_search.YouTubeSearchError):
+        await youtube_search.search_youtube(query, limit=limit)
+
+    assert slots.acquire(blocking=False)
+
+
+@pytest.mark.asyncio
+async def test_search_youtube_trims_query_before_search(monkeypatch):
+    calls = {}
+
+    def fake_search(query, limit):
+        calls["query"] = query
+        calls["limit"] = limit
+        return []
+
+    monkeypatch.setattr(youtube_search, "_search_sync", fake_search)
+    assert await youtube_search.search_youtube("  test song \\n") == []
+    assert calls == {"query": "test song", "limit": 5}
