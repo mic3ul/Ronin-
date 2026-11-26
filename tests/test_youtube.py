@@ -270,7 +270,7 @@ async def test_cancelled_search_keeps_slot_until_thread_finishes(monkeypatch):
         (None, 5),
         (123, 5),
         ("", 5),
-        (" \\t\\n", 5),
+        (" \t\n", 5),
         ("x" * 161, 5),
         ("test", True),
         ("test", 1.5),
@@ -304,5 +304,5 @@ async def test_search_youtube_trims_query_before_search(monkeypatch):
         return []
 
     monkeypatch.setattr(youtube_search, "_search_sync", fake_search)
-    assert await youtube_search.search_youtube("  test song \\n") == []
+    assert await youtube_search.search_youtube("  test song \n") == []
     assert calls == {"query": "test song", "limit": 5}
