@@ -111,6 +111,13 @@ async def search_youtube(query: str, limit: int = 5) -> list[dict[str, Any]]:
     underlying thread actually finishes; cancelling to_thread alone does not
     stop that thread.
     """
+    if not isinstance(query, str):
+        raise YouTubeSearchError("YouTube search query must be text")
+    clean_query = query.strip()
+    if not clean_query or len(clean_query) > 160:
+        raise YouTubeSearchError("YouTube search query must contain 1 to 160 characters")
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        raise YouTubeSearchError("YouTube search limit must be an integer")
     safe_limit = max(1, min(limit, 5))
     slots = _SEARCH_SLOTS
     if not slots.acquire(blocking=False):
@@ -118,7 +125,7 @@ async def search_youtube(query: str, limit: int = 5) -> list[dict[str, Any]]:
 
     release_when_worker_finishes = False
     try:
-        worker = asyncio.create_task(asyncio.to_thread(_search_sync, query, safe_limit))
+        worker = asyncio.create_task(asyncio.to_thread(_search_sync, clean_query, safe_limit))
         try:
             return await asyncio.wait_for(
                 asyncio.shield(worker),
