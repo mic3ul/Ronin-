@@ -14,6 +14,7 @@ from aiogram.types import (
 
 from filters import ThrottleFilter
 from services.youtube_search import (
+    YouTubeSearchBusyError,
     YouTubeSearchError,
     format_duration,
     search_youtube,
@@ -45,6 +46,9 @@ async def youtube_search_command(message: Message, command: CommandObject) -> No
     status = await message.reply("🔎 أبحث في يوتيوب…")
     try:
         results = await search_youtube(query, limit=5)
+    except YouTubeSearchBusyError:
+        await status.edit_text("هناك عمليات بحث كثيرة حالياً. انتظر قليلاً ثم حاول مجدداً.")
+        return
     except YouTubeSearchError:
         logger.exception("YouTube search failed")
         await status.edit_text("تعذّر البحث حالياً. حاول مرة أخرى بعد قليل.")
