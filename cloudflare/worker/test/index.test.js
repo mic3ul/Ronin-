@@ -912,6 +912,8 @@ test("Arabic help command lists the supported moderation commands", async (t) =>
   assert.match(calls[0].payload.text, /أوامر Ronin/);
   assert.match(calls[0].payload.text, /حظر/);
   assert.match(calls[0].payload.text, /ردّ على رسالة/);
+  assert.equal(calls[0].payload.text.split("\\n").length, 1);
+  assert.ok(calls[0].payload.text.split("\n").length >= 6);
 });
 
 test("ban command explains that it must reply to a target message", async (t) => {
