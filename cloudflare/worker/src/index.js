@@ -24,6 +24,9 @@ export function escapeHtml(value) {
 const COMMAND_ALIASES = new Map([
   ["/فحص", "/ping"],
   ["/حالة", "/ping"],
+  ["/مساعدة", "/help"],
+  ["/اوامر", "/help"],
+  ["/أوامر", "/help"],
   ["/قواعد", "/rules"],
   ["/القوانين", "/rules"],
   ["/ملفي", "/me"],
@@ -255,6 +258,17 @@ async function handleCommands(env, message, member) {
   const command = normalizeCommand(text);
   const chatId = message.chat.id;
   if (["/ping", "!ping"].includes(command)) { await sendText(env, chatId, "رونين يعمل."); return true; }
+  if (["/help", "!help"].includes(command)) {
+    await sendText(env, chatId,
+      "<b>أوامر Ronin</b>\\n" +
+      "/فحص — التحقق من عمل البوت\\n" +
+      "/قواعد — عرض قوانين المجموعة\\n" +
+      "/ملفي — عرض رسائلك وسمعتك\\n" +
+      "/بلاغ — ردّ على رسالة للإبلاغ عنها\\n" +
+      "/حظر — ردّ على رسالة لحظر صاحبها (للمشرفين)\\n" +
+      "/فك_الحظر — ردّ على رسالة لفك حظر صاحبها (للمشرفين)");
+    return true;
+  }
   if (["/rules", "!rules", "/правила"].includes(command)) { await sendText(env, chatId, env.RULES_TEXT || "يرجى الالتزام بقوانين المجموعة واحترام الأعضاء."); return true; }
   if (["/me", "!me", "/info", "/lvl"].includes(command)) {
     await sendText(env, chatId, "<b>" + escapeHtml(message.from.first_name || "Member") + "</b>\nالرسائل: " + member.message_count + "\nالسمعة: " + member.reputation_points + "\nمخالفات الإزعاج: " + member.spam_violations + "\nمخالفات الألفاظ: " + member.profanity_violations);
@@ -285,7 +299,17 @@ async function handleCommands(env, message, member) {
     return true;
   }
   if (["/ban", "!ban", "/unban", "!unban"].includes(command)) {
-    if (!message.reply_to_message || !message.reply_to_message.from || !await isChatAdmin(env, chatId, message.from.id).catch(() => false)) return true;
+    if (!message.reply_to_message || !message.reply_to_message.from) {
+      await sendText(env, chatId, "استخدم الأمر بالرد على رسالة العضو المراد حظره أو فك حظره.");
+      return true;
+    }
+    const actorIsAdmin = await isChatAdmin(env, chatId, message.from.id).catch(() => null);
+    if (actorIsAdmin !== true) {
+      await sendText(env, chatId, actorIsAdmin === false
+        ? "هذا الأمر للمشرفين فقط."
+        : "تعذر التحقق من صلاحياتك؛ لم يتم تنفيذ الأمر. حاول لاحقاً.");
+      return true;
+    }
     const targetId = message.reply_to_message.from.id;
     const targetIsAdmin = await isChatAdmin(env, chatId, targetId).catch(() => null);
     if (targetIsAdmin !== false) {
