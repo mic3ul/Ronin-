@@ -139,6 +139,9 @@ test("HTML escaping neutralizes Telegram HTML metacharacters", () => {
 
 test("Arabic moderation command aliases normalize to supported commands", () => {
   assert.equal(normalizeCommand("/فحص@RoninBot"), "/ping");
+  assert.equal(normalizeCommand("/مساعدة"), "/help");
+  assert.equal(normalizeCommand("/اوامر"), "/help");
+  assert.equal(normalizeCommand("/أوامر@RoninBot"), "/help");
   assert.equal(normalizeCommand("/القوانين"), "/rules");
   assert.equal(normalizeCommand("/ملفي"), "/me");
   assert.equal(normalizeCommand("/بلاغ"), "/report");
@@ -879,4 +882,126 @@ test("spam moderation skips deletion when the sender's administrator status is u
   assert.deepEqual(calls, ["getChatMember"]);
   assert.equal(DB.member.spam_violations, 0);
   assert.equal(DB.member.reputation_points, 0);
+});
+
+test("Arabic help command lists the supported moderation commands", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    return new Response(JSON.stringify({ ok: true, result: { message_id: 901 } }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await handleMessage({
+    DB: createModerationDb(),
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Member", is_bot: false },
+    message_id: 901,
+    text: "/مساعدة",
+  });
+
+  assert.deepEqual(calls.map((call) => call.method), ["sendMessage"]);
+  assert.match(calls[0].payload.text, /أوامر Ronin/);
+  assert.match(calls[0].payload.text, /حظر/);
+  assert.match(calls[0].payload.text, /ردّ على رسالة/);
+});
+
+test("ban command explains that it must reply to a target message", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    return new Response(JSON.stringify({ ok: true, result: { message_id: 902 } }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await handleMessage({
+    DB: createModerationDb(),
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Member", is_bot: false },
+    message_id: 902,
+    text: "/حظر",
+  });
+
+  assert.deepEqual(calls.map((call) => call.method), ["sendMessage"]);
+  assert.match(calls[0].payload.text, /بالرد على رسالة/);
+});
+
+test("ban command gives a clear Arabic denial to non-admins", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    const result = method === "getChatMember" ? { status: "member" } : { message_id: 903 };
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await handleMessage({
+    DB: createModerationDb(),
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Member", is_bot: false },
+    message_id: 903,
+    text: "/ban",
+    reply_to_message: { from: { id: 789, first_name: "Target" } },
+  });
+
+  assert.deepEqual(calls.map((call) => call.method), ["getChatMember", "sendMessage"]);
+  assert.match(calls.at(-1).payload.text, /للمشرفين فقط/);
+  assert.equal(calls.some((call) => call.method === "banChatMember"), false);
+});
+
+test("ban command explains when the actor's admin status cannot be verified", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(url).split("/").pop();
+    const payload = JSON.parse(options.body || "{}");
+    calls.push({ method, payload });
+    const result = method === "getChatMember"
+      ? { ok: false, description: "temporary lookup failure" }
+      : { message_id: 904 };
+    return new Response(JSON.stringify(method === "getChatMember" ? result : { ok: true, result }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await handleMessage({
+    DB: createModerationDb(),
+    TELEGRAM_BOT_TOKEN: "test-token",
+    MAIN_GROUP_IDS: "[-100123]",
+  }, {
+    chat: { id: -100123, type: "supergroup", title: "Test group" },
+    from: { id: 456, first_name: "Moderator", is_bot: false },
+    message_id: 904,
+    text: "/ban",
+    reply_to_message: { from: { id: 789, first_name: "Target" } },
+  });
+
+  assert.deepEqual(calls.map((call) => call.method), ["getChatMember", "sendMessage"]);
+  assert.match(calls.at(-1).payload.text, /تعذر التحقق من صلاحياتك/);
+  assert.equal(calls.some((call) => call.method === "banChatMember"), false);
 });
