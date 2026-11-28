@@ -33,9 +33,9 @@ Implemented in this first native port:
 - Optional profanity term matching via the `PROFANITY_TERMS` variable.
 - Newcomer-burst detection with configurable log/delete action.
 - `/help`, `/ping`, `/rules`, `/me`, `/report`, `/ban`, and `/unban`.
-- Arabic aliases: `/مساعدة` and `/أوامر`, `/فحص` and `/حالة`,
+- Arabic aliases: `/مساعدة`, `/اوامر`, and `/أوامر`, `/فحص` and `/حالة`,
   `/القوانين` and `/قواعد`, `/ملفي` and `/معلوماتي`, `/بلاغ`,
-  `/حظر`, and `/فك_الحظر`.
+  `/حظر`, `/فك_الحظر`, and `/الغاء_الحظر`.
 - Moderator report buttons, audit log output, and optional repeat-spam autoban.
 
 Not yet ported from the Python runtime:

@@ -147,6 +147,7 @@ test("Arabic moderation command aliases normalize to supported commands", () => 
   assert.equal(normalizeCommand("/بلاغ"), "/report");
   assert.equal(normalizeCommand("/حظر"), "/ban");
   assert.equal(normalizeCommand("/فك_الحظر"), "/unban");
+  assert.equal(normalizeCommand("/الغاء_الحظر"), "/unban");
   assert.equal(normalizeCommand("/custom@RoninBot"), "/custom");
 });
 
@@ -910,6 +911,8 @@ test("Arabic help command lists the supported moderation commands", async (t) =>
 
   assert.deepEqual(calls.map((call) => call.method), ["sendMessage"]);
   assert.match(calls[0].payload.text, /أوامر Ronin/);
+  assert.match(calls[0].payload.text, /\/مساعدة أو \/اوامر أو \/أوامر/);
+  assert.match(calls[0].payload.text, /\/فك_الحظر أو \/الغاء_الحظر/);
   assert.match(calls[0].payload.text, /حظر/);
   assert.match(calls[0].payload.text, /ردّ على رسالة/);
   assert.equal(calls[0].payload.text.split("\\n").length, 1);
